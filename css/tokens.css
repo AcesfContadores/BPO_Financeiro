@@ -1,0 +1,82 @@
+/* Tokens do padrão visual ACESF · Painel Grupo Prontomed
+   Marca fixa: navy #1F3A6E, azul #5B9BD5, dourado #C9A96E, Montserrat.
+   Cada linha de negócio mantém a MESMA cor em todas as telas. */
+@import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap");
+
+:root {
+  color-scheme: light;
+  --navy: #1F3A6E;
+  --navy-barra: #1F3A6E;
+  --azul: #5B9BD5;
+  --dourado: #C9A96E;
+
+  /* empresas */
+  --emp-prontomed: #5B9BD5;
+  --emp-multidisciplinar: #2BB39A;
+  --emp-grupo: #C9A96E;
+
+  /* linhas de receita — Prontomed */
+  --lin-lab: #1F3A6E; --lin-cons: #5B9BD5; --lin-img: #C9A96E; --lin-cardio: #8FA3BF; --lin-acess: #B8C2CC;
+  --lab-part: #1F3A6E; --lab-conv: #4A69A0; --lab-emp: #A9BADA;
+  /* linhas de receita — Multidisciplinar */
+  --mu-conv: #1F3A6E; --mu-multi: #2BB39A; --mu-atend-part: #5B9BD5; --mu-outras: #B8C2CC;
+  /* especialidades */
+  --esp-psico: #1F3A6E; --esp-psicoped: #2BB39A; --esp-to: #5B9BD5; --esp-fisio: #C9A96E;
+  --esp-fono: #8FA3BF; --esp-nutri: #E07A5F; --esp-outros: #B8C2CC;
+
+  /* rampa sequencial (magnitude de custos e despesas): escuro = maior */
+  --seq-1: #1F3A6E; --seq-2: #4A69A0; --seq-3: #7C95C4; --seq-4: #A9BADA; --seq-5: #D3DCEC;
+
+  /* semântica (estado, nunca identidade) */
+  --bom: #1F9D6B; --ruim: #D64545; --atencao: #E0A82E; --neutro: #8A94A6;
+  --bom-fundo: #E7F5EF; --ruim-fundo: #FBEAEA; --atencao-fundo: #FFF6E0; --atencao-texto: #8A4B00;
+
+  /* superfícies e texto */
+  --pagina: #F5F7FA;
+  --painel: #FFFFFF;
+  --painel-2: #F4F6FA;
+  --borda: #E3E8F0;
+  --grade: #E9EDF3;
+  --subtotal: #EAF0F8;
+  --texto: #1A2238;
+  --texto-2: #4C5873;
+  --texto-3: #7A859C;
+  --trilho: #E3E8F0;
+  --sombra: 0 1px 2px rgba(31, 58, 110, .06), 0 4px 16px rgba(31, 58, 110, .05);
+
+  --raio: 10px;
+  --fonte: "Montserrat", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+/* Tema escuro: passos próprios (não é inversão automática). A navy da marca some no fundo escuro,
+   então as linhas que usam navy sobem para um azul mais claro, mantendo a identidade. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-tema="claro"]) {
+    color-scheme: dark;
+    --seq-1: #A9C3F2; --seq-2: #7F9EDB; --seq-3: #5F7DB9; --seq-4: #455F94; --seq-5: #324673;
+    --navy-barra: #7FA2E8; --lin-lab: #7FA2E8; --lab-part: #7FA2E8; --lab-conv: #5C80C4; --lab-emp: #3E5A92;
+    --mu-conv: #7FA2E8; --esp-psico: #7FA2E8;
+    --bom: #3CC38F; --ruim: #F0706F; --atencao: #E8B54A; --neutro: #98A2B6;
+    --bom-fundo: #12342A; --ruim-fundo: #3A1A1D; --atencao-fundo: #3A2E12; --atencao-texto: #F2C77A;
+    --pagina: #0E1526; --painel: #151E34; --painel-2: #1B2641; --borda: #26324F; --grade: #212C48;
+    --subtotal: #1D2A4A; --texto: #E8ECF6; --texto-2: #B5BED3; --texto-3: #8591AB; --trilho: #26324F;
+    --sombra: 0 1px 2px rgba(0, 0, 0, .4);
+  }
+}
+:root[data-tema="escuro"] {
+  color-scheme: dark;
+  --seq-1: #A9C3F2; --seq-2: #7F9EDB; --seq-3: #5F7DB9; --seq-4: #455F94; --seq-5: #324673;
+  --navy-barra: #7FA2E8; --lin-lab: #7FA2E8; --lab-part: #7FA2E8; --lab-conv: #5C80C4; --lab-emp: #3E5A92;
+  --mu-conv: #7FA2E8; --esp-psico: #7FA2E8;
+  --bom: #3CC38F; --ruim: #F0706F; --atencao: #E8B54A; --neutro: #98A2B6;
+  --bom-fundo: #12342A; --ruim-fundo: #3A1A1D; --atencao-fundo: #3A2E12; --atencao-texto: #F2C77A;
+  --pagina: #0E1526; --painel: #151E34; --painel-2: #1B2641; --borda: #26324F; --grade: #212C48;
+  --subtotal: #1D2A4A; --texto: #E8ECF6; --texto-2: #B5BED3; --texto-3: #8591AB; --trilho: #26324F;
+  --sombra: 0 1px 2px rgba(0, 0, 0, .4);
+}
+
+body[data-empresa="prontomed"] { --emp: var(--emp-prontomed); }
+body[data-empresa="multidisciplinar"] { --emp: var(--emp-multidisciplinar); }
+body[data-empresa="grupo"] { --emp: var(--emp-grupo); }
+
+html, body { margin: 0; font-family: var(--fonte); color: var(--texto); background: var(--pagina); }

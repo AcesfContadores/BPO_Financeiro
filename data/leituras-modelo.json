@@ -1,0 +1,10 @@
+{
+  "competencia": "2026-09",
+  "data_reuniao": { "valor": "", "a_confirmar": true },
+  "proxima_reuniao": { "valor": "", "a_confirmar": true },
+  "acordos": [ { "letra": "a", "texto": "", "status": "Pendente" } ],
+  "leituras": { "prontomed": [ { "n": 1, "titulo": "", "texto": "" } ], "multidisciplinar": [ { "n": 1, "titulo": "", "texto": "" } ] },
+  "plano_acao": { "prontomed": [ { "o_que": "", "responsavel": "", "prazo": "Próximo fechamento" } ], "multidisciplinar": [] },
+  "decisoes": [],
+  "checagem": { "prontomed": {}, "multidisciplinar": {}, "grupo": {} }
+}
