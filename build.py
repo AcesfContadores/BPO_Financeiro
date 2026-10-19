@@ -1,9 +1,13 @@
-import re, json, os, sys, base64, secrets, hashlib
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-import pathlib
+"""Gera o index.html do painel ao vivo (uma página só, sem dados dentro).
+Uso: python3 build.py
+Os dados e o login vêm do Supabase (função acesf_dados) quando a pessoa entra na página.
+"""
+import re, os, base64, pathlib
 root = str(pathlib.Path(__file__).resolve().parent)
-sp = root + "/data"
-ITER = 310000
+
+# Chave pública (anon) do projeto Supabase: pode ficar no arquivo. Quem protege os dados é o login no banco.
+API_URL = os.environ.get("ACESF_API_URL", "https://cnzsujluejjptxofxxsr.supabase.co")
+API_KEY = os.environ.get("ACESF_API_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNuenN1amx1ZWpqcHR4b2Z4eHNyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk0NTI4MzQsImV4cCI6MjEwNTAyODgzNH0.vmVkztn8rb25UxjEReM7wyUkIg3NVQ1ZfQCqZ55V-vo")
 
 def bundle(dirname, entry_export_name):
     mods = {}
@@ -34,7 +38,8 @@ def bundle(dirname, entry_export_name):
     return "const %s = (function () {\nconst __d = {}, __c = {};\nfunction __r(n) { return __c[n] ??= __d[n](); }\n%s\nreturn __r(\"app.js\");\n})();\n" % (entry_export_name, "\n".join(out))
 
 pjs = bundle("src/prontomed/js", "Prontomed"); ijs = bundle("src/imunne/js", "Imunne")
-shell = "const LOGO = \"data:image/png;base64," + base64.b64encode(open(root + "/assets/logo.png","rb").read()).decode() + "\";\n" + open(f"{root}/src/shell/shell.js", encoding="utf8").read()
+logo = base64.b64encode(open(root + "/assets/logo.png", "rb").read()).decode()
+shell = f'const ACESF_API = {{ url: "{API_URL}", key: "{API_KEY}" }};\nconst LOGO = "data:image/png;base64,{logo}";\n' + open(f"{root}/src/shell/shell.js", encoding="utf8").read()
 
 # ── CSS combinado
 pt = open(root + "/css/tokens-prontomed.css", encoding="utf8").read()
@@ -61,43 +66,17 @@ css += "\n.embutida .btn[title^=\"Buscar\"] { display: none; }\n"
 css = css.replace('@import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap");\n', '')
 fonts = '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&family=Jost:wght@500;600&display=swap">'
 
-# ── criptografia
-creds_path = f"{root}/credenciais.json"
-if os.path.exists(creds_path): creds = json.load(open(creds_path))
-else:
-    alf = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-    gen = lambda: "-".join("".join(secrets.choice(alf) for _ in range(4)) for _ in range(4))
-    creds = {"prontomed": {"usuario": "prontomed", "senha": gen()}, "imunne": {"usuario": "imunne", "senha": gen()}, "admin": {"usuario": "administrador", "senha": gen()}}
-    json.dump(creds, open(creds_path, "w"), indent=1)
-    os.chmod(creds_path, 0o600)
-B = lambda b: base64.b64encode(b).decode()
-datasets = {"prontomed": json.load(open(sp + "/prontomed.json")), "imunne": json.load(open(sp + "/imunne.json"))}
-keys = {k: AESGCM.generate_key(256) for k in datasets}
-dados = {}
-for k, d in datasets.items():
-    iv = os.urandom(12)
-    ct = AESGCM(keys[k]).encrypt(iv, json.dumps(d, ensure_ascii=False, separators=(",", ":")).encode(), None)
-    dados[k] = {"iv": B(iv), "ct": B(ct)}
-acc_def = {"prontomed": ["prontomed"], "imunne": ["imunne"], "admin": ["prontomed", "imunne"]}
-contas = []
-for papel, c in creds.items():
-    salt = os.urandom(16)
-    kek = hashlib.pbkdf2_hmac("sha256", f"{c['usuario'].strip().lower()}\0{c['senha']}".encode(), salt, ITER, 32)
-    ch = {}
-    for ds in acc_def[papel]:
-        iv = os.urandom(12); ch[ds] = {"iv": B(iv), "ct": B(AESGCM(kek).encrypt(iv, keys[ds], None))}
-    contas.append({"papel": papel, "usuario": c["usuario"], "salt": B(salt), "chaves": ch})
-acess = {"iteracoes": ITER, "contas": contas, "dados": dados}
-
-html = f"""<title>Painéis ACESF</title>
-<meta name="claude:viewport-fit-sides" content="cover">
+html = f"""<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
+<title>Painéis ACESF</title>
 {fonts}
 <style>
 {css}
 html, body {{ background: var(--pagina); }}
 body {{ margin: 0; }}
-</style>
+</style></head><body>
 <div id="acesf"></div>
 <script>
 (function () {{
@@ -109,12 +88,11 @@ body {{ margin: 0; }}
 }})();
 </script>
 <script>
-const ACESS = {json.dumps(acess, separators=(",", ":"))};
 {pjs}
 {ijs}
 {shell}
 </script>
+</body></html>
 """
-pagina = '<!doctype html>\n<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"></head><body>\n' + html + '</body></html>\n'
-open(root + "/index.html", "w", encoding="utf8").write(pagina)
-print("index.html gerado:", len(pagina), "bytes; usuários:", {k: v["usuario"] for k, v in creds.items()})
+open(root + "/index.html", "w", encoding="utf8").write(html)
+print("index.html gerado:", len(html), "bytes")

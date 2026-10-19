@@ -1,5 +1,1 @@
-# dados financeiros e senhas nunca vão para o GitHub
-data/*.json
-!data/leituras-modelo.json
-credenciais.json
 __pycache__/

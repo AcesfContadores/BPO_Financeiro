@@ -18,25 +18,31 @@ const svg = (d) => {
   for (const [k, v] of Object.entries({ viewBox: "0 0 24 24", width: 20, height: 20, fill: "none", stroke: "currentColor", "stroke-width": 1.8, "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" })) s.setAttribute(k, v);
   const p = document.createElementNS("http://www.w3.org/2000/svg", "path"); p.setAttribute("d", d); s.append(p); return s;
 };
-const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
-const enc = new TextEncoder(), dec = new TextDecoder();
-
-async function chaveDaSenha(usuario, senha, saltB64) {
-  const base = await crypto.subtle.importKey("raw", enc.encode(`${usuario.trim().toLowerCase()}\u0000${senha}`), "PBKDF2", false, ["deriveKey"]);
-  return crypto.subtle.deriveKey({ name: "PBKDF2", salt: b64(saltB64), iterations: ACESS.iteracoes, hash: "SHA-256" }, base, { name: "AES-GCM", length: 256 }, false, ["decrypt"]);
+// Login validado no servidor (função acesf_dados do Supabase). A senha nunca fica no arquivo e os dados só chegam depois do login.
+class ErroLogin extends Error { constructor(tipo) { super(tipo); this.tipo = tipo; } }
+async function chamarBanco(usuario, senha) {
+  let resp;
+  try {
+    resp = await fetch(`${ACESF_API.url}/rest/v1/rpc/acesf_dados`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: ACESF_API.key, Authorization: `Bearer ${ACESF_API.key}` },
+      body: JSON.stringify({ p_usuario: usuario.trim(), p_senha: senha }),
+    });
+  } catch (_) { throw new ErroLogin("rede"); }
+  if (!resp.ok) throw new ErroLogin("rede");
+  const j = await resp.json();
+  if (j?.erro === "bloqueado") throw new ErroLogin("bloqueado");
+  if (j?.erro || !j?.papel) throw new ErroLogin("credenciais");
+  const dados = {};
+  if (j.dados.prontomed) dados.prontomed = j.dados.prontomed;
+  if (j.dados.imunne) dados.imunne = Imunne.montarRaw(j.dados.imunne);
+  return { papel: j.papel, usuario: j.usuario, dados, admin: j.papel === "admin", buscadoEm: new Date(j.gerado_em ?? Date.now()) };
 }
 async function abrir(papel, usuario, senha) {
-  const conta = ACESS.contas.find((c) => c.papel === papel);
-  if (!conta) throw new Error("conta");
-  const kek = await chaveDaSenha(usuario, senha, conta.salt);
-  const dados = {};
-  for (const [ds, w] of Object.entries(conta.chaves)) {
-    const bruta = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64(w.iv) }, kek, b64(w.ct)); // falha aqui = senha errada
-    const k = await crypto.subtle.importKey("raw", bruta, "AES-GCM", false, ["decrypt"]);
-    const claro = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64(ACESS.dados[ds].iv) }, k, b64(ACESS.dados[ds].ct));
-    dados[ds] = JSON.parse(dec.decode(claro));
-  }
-  return { papel, usuario: conta.usuario, dados, admin: papel === "admin" };
+  const s = await chamarBanco(usuario, senha);
+  if (s.papel !== papel) throw new ErroLogin("credenciais"); // senha de outra empresa não abre esta
+  s.cred = { usuario, senha };
+  return s;
 }
 
 const EMPRESAS = {
@@ -45,7 +51,6 @@ const EMPRESAS = {
 };
 
 const raiz = document.getElementById("acesf");
-let tentativas = 0, bloqueadoAte = 0;
 
 // ───────────────────────── login ─────────────────────────
 function telaLogin() {
@@ -80,17 +85,14 @@ function telaLogin() {
     ev.preventDefault();
     if (!escolha) { aviso.textContent = "Escolha a empresa para entrar."; return; }
     if (!usuario.value.trim() || !senha.value) { aviso.textContent = "Informe usuário e senha."; return; }
-    const agora = Date.now();
-    if (agora < bloqueadoAte) { aviso.textContent = `Aguarde ${Math.ceil((bloqueadoAte - agora) / 1000)} s para tentar de novo.`; return; }
     entrar.disabled = true; entrar.textContent = "Abrindo…"; aviso.textContent = "";
     try {
       const sessao = await abrir(escolha, usuario.value, senha.value);
-      tentativas = 0; senha.value = "";
+      senha.value = "";
       await abrirPainel(sessao);
-    } catch (_) {
-      tentativas++; bloqueadoAte = Date.now() + Math.min(30, tentativas * tentativas) * 1000 * (tentativas >= 3 ? 1 : 0);
-      aviso.textContent = "Usuário ou senha incorretos.";
-      senha.value = ""; senha.focus();
+    } catch (e) {
+      aviso.textContent = e.tipo === "bloqueado" ? "Muitas tentativas erradas. Aguarde 5 minutos e tente de novo." : e.tipo === "rede" ? "Não consegui falar com o banco. Verifique a internet e tente de novo." : "Usuário ou senha incorretos.";
+      if (e.tipo !== "rede") { senha.value = ""; senha.focus(); }
     } finally { entrar.disabled = false; entrar.textContent = "Entrar"; }
   } }, h("fieldset", { class: "lg-escolha" }, h("legend", { text: "Qual empresa você quer acessar?" }), cartoes), campos, h("div", { class: "lg-rodape" }, admin));
 
@@ -104,7 +106,7 @@ function telaLogin() {
 
 // ───────────────────────── painel logado ─────────────────────────
 const montados = {}; // id -> { host, api, pagina, carimbo }
-let sessao = null, ativa = null;
+let sessao = null, ativa = null, timerAtu = null;
 const aberto = new Set();
 
 async function abrirPainel(s) {
@@ -112,17 +114,19 @@ async function abrirPainel(s) {
   const ids = s.admin ? ["prontomed", "imunne"] : [s.papel];
   raiz.replaceChildren();
   const menu = h("nav", { class: "menu", "aria-label": "Empresas e telas" });
-  const carimbo = h("p", { class: "carimbo dim" });
+  const carimbo = h("p", { class: "carimbo dim", "aria-live": "polite" });
+  const botaoAtu = h("button", { type: "button", class: "ac-atu", text: "Atualizar agora", onClick: () => atualizar(false) });
+  let ultimo = s.buscadoEm, falhou = false, emAndamento = false;
   const conteudo = h("div", { class: "centro acesf-centro" });
   const sair = h("button", { type: "button", class: "ac-sair", text: "Sair", onClick: encerrar });
   const eu = h("p", { class: "ac-eu" }, h("small", { text: s.admin ? "Administrador" : "Acesso" }), h("strong", { text: s.admin ? "ACESF" : EMPRESAS[s.papel].nome }));
   raiz.append(h("div", { class: "casca ac-casca" },
-    h("header", { class: "lateral" }, h("div", { class: "marca-app" }, h("img", { class: "ac-logo", src: LOGO, alt: "ACESF Contadores Associados" })), menu, h("div", { class: "ac-pe" }, carimbo, eu, sair)),
+    h("header", { class: "lateral" }, h("div", { class: "marca-app" }, h("img", { class: "ac-logo", src: LOGO, alt: "ACESF Contadores Associados" })), menu, h("div", { class: "ac-pe" }, carimbo, botaoAtu, eu, sair)),
     conteudo));
   for (const id of ids) {
     const host = h("div", { class: "host", "data-id": id, hidden: true });
     conteudo.append(host);
-    montados[id] = { host, api: null, pagina: "resumo", menu: null };
+    montados[id] = { host, api: null, pagina: "resumo", pendente: null };
   }
   const desenharMenu = () => {
     menu.replaceChildren();
@@ -146,24 +150,55 @@ async function abrirPainel(s) {
     const m = montados[id];
     if (!m.api) {
       m.host.hidden = false; m.host.replaceChildren(h("p", { class: "carregando", text: "Carregando os números…" }));
-      m.api = await EMPRESAS[id].modulo().mount(m.host, s.dados[id], { aoMudar: (st) => { m.pagina = st.page; if (ativa === id) { carimbo.textContent = dataBR(m.api?.carimbo()); desenharMenu(); } } });
+      m.api = await EMPRESAS[id].modulo().mount(m.host, s.dados[id], { aoMudar: (st) => { m.pagina = st.page; if (ativa === id) { desenharMenu(); } } });
       if (!m.api) return;
     }
+    if (m.pendente) { const novo = m.pendente; m.pendente = null; await m.api.atualizar(novo); }
     ativa = id; aberto.clear(); aberto.add(id);
     for (const [k, v] of Object.entries(montados)) v.host.hidden = k !== id;
     if (pagina) m.api.ir(pagina === "comparativo" ? { page: pagina, emp: "grupo", d: null } : { page: pagina, d: null });
     else m.api.redesenhar();
-    carimbo.textContent = dataBR(m.api.carimbo());
+    pintarCarimbo();
     window.scrollTo(0, 0);
     desenharMenu();
   }
+  const hhmm = (d) => new Date(d).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  const diaHora = (iso) => new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  function pintarCarimbo() {
+    const sync = s.dados[ativa]?.ultima_sincronizacao;
+    carimbo.replaceChildren(
+      h("span", {}, `${falhou ? "Sem conexão. Último dado: " : "Atualizado às "}${hhmm(ultimo)}`),
+      sync ? h("span", {}, `Nibo sincronizado em ${diaHora(sync)}`) : null);
+  }
+  async function atualizar(auto) {
+    if (emAndamento) return;
+    emAndamento = true; botaoAtu.disabled = true; if (!auto) botaoAtu.textContent = "Atualizando…";
+    try {
+      const novo = await chamarBanco(s.cred.usuario, s.cred.senha);
+      for (const id of ids) {
+        s.dados[id] = novo.dados[id];
+        const m = montados[id];
+        if (!m.api) continue;
+        if (id === ativa) await m.api.atualizar(novo.dados[id]); else m.pendente = novo.dados[id];
+      }
+      ultimo = novo.buscadoEm; falhou = false;
+      if (ativa) desenharMenu();
+    } catch (e) {
+      if (e.tipo === "credenciais") { encerrar(); return; } // senha trocada no banco: volta ao login
+      falhou = true;
+    } finally {
+      emAndamento = false; botaoAtu.disabled = false; botaoAtu.textContent = "Atualizar agora"; pintarCarimbo();
+    }
+  }
+  const ATUALIZA_A_CADA = 5 * 60 * 1000;
+  timerAtu = setInterval(() => { if (!document.hidden) atualizar(true); }, ATUALIZA_A_CADA);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && sessao && Date.now() - ultimo.getTime() > 2 * 60 * 1000) atualizar(true); });
   desenharMenu();
   await irPara(ids[0], null);
 }
-const dataBR = (iso) => (iso ? `Dados de ${new Date(iso).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}` : "");
 
 function encerrar() {
-  sessao = null; ativa = null;
+  sessao = null; ativa = null; clearInterval(timerAtu);
   for (const k of Object.keys(montados)) delete montados[k];
   try { location.reload(); return; } catch (_) { /* sem recarregar: volta para o login */ }
   telaLogin();

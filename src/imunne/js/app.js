@@ -5,6 +5,8 @@ import { el, limpar, esconderTip } from "./util.js";
 import { S, PAGINAS, lerHash, paraHash, ir, setHash, onRota } from "./state.js";
 import { EMP, CENTROS, mesLongo, mesCurto, mesAberto } from "./model.js";
 import { renderDrawer } from "./drawer.js";
+import { montarRaw } from "./montar.js";
+export { montarRaw };
 import { renderResumo } from "./views/resumo.js";
 import { renderReceitas } from "./views/receitas.js";
 import { renderCustos } from "./views/custos.js";
@@ -165,6 +167,7 @@ export async function mount(host, raw, opts = {}) {
   return {
     ir: (p) => ir(p),
     redesenhar: () => render(),
+    atualizar: async (novo) => { definirDados(novo); S.P = await carregarPainel(); aplicarHash(); render(); },
     estado: () => ({ page: S.page, emp: S.emp, mes: S.mes }),
     carimbo: () => S.P?.raw?.gerado_em ?? null,
     paginas: () => PAGINAS.concat(["comparativo"]),

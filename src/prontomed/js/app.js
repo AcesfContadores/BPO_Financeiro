@@ -167,6 +167,7 @@ export async function mount(host, raw, opts = {}) {
   return {
     ir: (p) => ir(p),
     redesenhar: () => render(),
+    atualizar: async (novo) => { definirDados(novo); S.P = await carregarPainel(); aplicarHash(); render(); },
     estado: () => ({ page: S.page, emp: S.emp, mes: S.mes }),
     carimbo: () => S.P?.raw?.gerado_em ?? null,
     paginas: () => PAGINAS.concat(["comparativo"]),
