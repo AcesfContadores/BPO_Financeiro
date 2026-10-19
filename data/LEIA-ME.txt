@@ -1,0 +1,1 @@
+Coloque aqui prontomed.json e imunne.json (formato: contas, empresas, gerado_em, ultima_sincronizacao). Estes arquivos não sobem para o GitHub.
