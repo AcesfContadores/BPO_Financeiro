@@ -1,5 +1,4 @@
-// Casca única: tela de login, abertura dos dados (criptografados) e menu lateral por empresa.
-// Os dados de cada empresa só existem em claro depois que a senha certa abre a chave dela.
+// Casca: login do perfil desta página (MODO), busca ao banco e menu lateral. Cada página publicada contém só o código da própria empresa.
 const h = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -35,7 +34,7 @@ async function chamarBanco(usuario, senha) {
   if (j?.erro || !j?.papel) throw new ErroLogin("credenciais");
   const dados = {};
   if (j.dados.prontomed) dados.prontomed = j.dados.prontomed;
-  if (j.dados.imunne) dados.imunne = Imunne.montarRaw(j.dados.imunne);
+  if (j.dados.imunne && typeof Imunne !== "undefined") dados.imunne = Imunne.montarRaw(j.dados.imunne);
   return { papel: j.papel, usuario: j.usuario, dados, admin: j.papel === "admin", buscadoEm: new Date(j.gerado_em ?? Date.now()) };
 }
 async function abrir(papel, usuario, senha) {
@@ -45,45 +44,30 @@ async function abrir(papel, usuario, senha) {
   return s;
 }
 
-const EMPRESAS = {
-  prontomed: { id: "prontomed", nome: "Prontomed", completo: "Clínica Prontomed e Multidisciplinar", cor: "var(--emp-prontomed)", modulo: () => Prontomed },
-  imunne: { id: "imunne", nome: "IMUNNE", completo: "Iguatu, Icó, Cajazeiras e CD de vacinas", cor: "var(--emp-iguatu)", modulo: () => Imunne },
-};
+/*EMPRESAS*/
 
 const raiz = document.getElementById("acesf");
 
 // ───────────────────────── login ─────────────────────────
 function telaLogin() {
   raiz.replaceChildren();
-  let escolha = null;
+  let escolha = MODO;
   const aviso = h("p", { class: "lg-erro", role: "alert", "aria-live": "assertive" });
   const usuario = h("input", { id: "lg-usuario", type: "text", autocomplete: "username", autocapitalize: "none", spellcheck: "false", required: true });
   const senha = h("input", { id: "lg-senha", type: "password", autocomplete: "current-password", required: true });
   const ver = h("button", { type: "button", class: "lg-ver", "aria-label": "Mostrar senha", text: "Mostrar", onClick: () => { const m = senha.type === "password"; senha.type = m ? "text" : "password"; ver.textContent = m ? "Ocultar" : "Mostrar"; ver.setAttribute("aria-label", m ? "Ocultar senha" : "Mostrar senha"); } });
   const entrar = h("button", { type: "submit", class: "lg-entrar", text: "Entrar" });
   const cab = h("p", { class: "lg-quem", "aria-live": "polite" });
-  const cartoes = h("div", { class: "lg-cartoes", role: "radiogroup", "aria-label": "Empresa" });
-  const campos = h("div", { class: "lg-campos", hidden: true },
+    const campos = h("div", { class: "lg-campos" },
     cab,
     h("label", { class: "lg-campo", for: "lg-usuario" }, h("span", { text: "Usuário" }), usuario),
     h("label", { class: "lg-campo", for: "lg-senha" }, h("span", { text: "Senha" }), h("span", { class: "lg-senha" }, senha, ver)),
     aviso, entrar);
-  const admin = h("button", { type: "button", class: "lg-admin", text: "Entrar como administrador ACESF", onClick: () => escolher("admin") });
 
-  const escolher = (id) => {
-    escolha = id; aviso.textContent = ""; campos.hidden = false;
-    for (const b of cartoes.children) { const on = b.dataset.id === id; b.setAttribute("aria-checked", String(on)); b.classList.toggle("on", on); }
-    admin.classList.toggle("on", id === "admin");
-    cab.textContent = id === "admin" ? "Acesso do administrador" : `Acesso ${EMPRESAS[id].nome}`;
-    usuario.focus();
-  };
-  for (const e of Object.values(EMPRESAS))
-    cartoes.append(h("button", { type: "button", role: "radio", "aria-checked": "false", class: "lg-cartao", "data-id": e.id, style: { "--c": e.cor }, onClick: () => escolher(e.id) },
-      h("i"), h("span", {}, h("strong", { text: e.nome }), h("small", { text: e.completo }))));
+  cab.textContent = MODO === "admin" ? "Acesso do administrador" : `Acesso ${EMPRESAS[MODO].nome}`;
 
   const form = h("form", { class: "lg-form", novalidate: true, onSubmit: async (ev) => {
     ev.preventDefault();
-    if (!escolha) { aviso.textContent = "Escolha a empresa para entrar."; return; }
     if (!usuario.value.trim() || !senha.value) { aviso.textContent = "Informe usuário e senha."; return; }
     entrar.disabled = true; entrar.textContent = "Abrindo…"; aviso.textContent = "";
     try {
@@ -94,13 +78,14 @@ function telaLogin() {
       aviso.textContent = e.tipo === "bloqueado" ? "Muitas tentativas erradas. Aguarde 5 minutos e tente de novo." : e.tipo === "rede" ? "Não consegui falar com o banco. Verifique a internet e tente de novo." : "Usuário ou senha incorretos.";
       if (e.tipo !== "rede") { senha.value = ""; senha.focus(); }
     } finally { entrar.disabled = false; entrar.textContent = "Entrar"; }
-  } }, h("fieldset", { class: "lg-escolha" }, h("legend", { text: "Qual empresa você quer acessar?" }), cartoes), campos, h("div", { class: "lg-rodape" }, admin));
+  } }, campos);
 
   raiz.append(h("main", { class: "lg" },
     h("section", { class: "lg-marca" },
       h("img", { class: "lg-logo", src: LOGO, alt: "ACESF Contadores Associados" }),
-      h("h1", { text: "Painéis financeiros" }),
-      h("p", { class: "lg-nota", text: "Acesso restrito. Cada empresa vê apenas o próprio painel." })),
+      h("h1", { text: "Painel financeiro" }),
+      h("p", { class: "lg-empresa", text: MODO === "admin" ? "Administrador ACESF" : EMPRESAS[MODO].completo }),
+      h("p", { class: "lg-nota", text: "Acesso restrito." })),
     h("section", { class: "lg-painel", "aria-labelledby": "lg-titulo" }, h("h2", { id: "lg-titulo", text: "Entrar" }), form)));
 }
 
@@ -111,7 +96,7 @@ const aberto = new Set();
 
 async function abrirPainel(s) {
   sessao = s;
-  const ids = s.admin ? ["prontomed", "imunne"] : [s.papel];
+  const ids = s.admin ? Object.keys(EMPRESAS) : [s.papel];
   raiz.replaceChildren();
   const menu = h("nav", { class: "menu", "aria-label": "Empresas e telas" });
   const carimbo = h("p", { class: "carimbo dim", "aria-live": "polite" });

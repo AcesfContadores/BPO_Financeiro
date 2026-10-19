@@ -1,4 +1,4 @@
-"""Gera o index.html do painel ao vivo (uma página só, sem dados dentro).
+"""Gera as páginas do painel ao vivo (raiz, prontomed, imunne, administrador), sem dados dentro.
 Uso: python3 build.py
 Os dados e o login vêm do Supabase (função acesf_dados) quando a pessoa entra na página.
 """
@@ -37,9 +37,10 @@ def bundle(dirname, entry_export_name):
         out.append(f'__d["{name}"] = function () {{\n{src}\nreturn {{ {", ".join(dict.fromkeys(exports))} }};\n}};')
     return "const %s = (function () {\nconst __d = {}, __c = {};\nfunction __r(n) { return __c[n] ??= __d[n](); }\n%s\nreturn __r(\"app.js\");\n})();\n" % (entry_export_name, "\n".join(out))
 
-pjs = bundle("src/prontomed/js", "Prontomed"); ijs = bundle("src/imunne/js", "Imunne")
+PJS = bundle("src/prontomed/js", "Prontomed"); IJS = bundle("src/imunne/js", "Imunne")
 logo = base64.b64encode(open(root + "/assets/logo.png", "rb").read()).decode()
-shell = f'const ACESF_API = {{ url: "{API_URL}", key: "{API_KEY}" }};\nconst LOGO = "data:image/png;base64,{logo}";\n' + open(f"{root}/src/shell/shell.js", encoding="utf8").read()
+SHELL_SRC = open(f"{root}/src/shell/shell.js", encoding="utf8").read()
+HEAD = f'const ACESF_API = {{ url: "{API_URL}", key: "{API_KEY}" }};\nconst LOGO = "data:image/png;base64,{logo}";\n'
 
 # ── CSS combinado
 pt = open(root + "/css/tokens-prontomed.css", encoding="utf8").read()
@@ -64,16 +65,43 @@ PAL_D = "--cat-1: #7FA2E8; --cat-2: #D9B97C; --cat-3: #4CC38A; --cat-4: #F6A15E;
 css += f"\n:root {{ {PAL_L} }}\n@media (prefers-color-scheme: dark) {{ :root:not([data-tema=\"claro\"]) {{ {PAL_D} }} }}\n:root[data-tema=\"escuro\"] {{ {PAL_D} }}\n"
 css += "\n.embutida .btn[title^=\"Buscar\"] { display: none; }\n"
 css = css.replace('@import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap");\n', '')
-fonts = '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&family=Jost:wght@500;600&display=swap">'
+fonts = '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap">'
 
-html = f"""<!doctype html>
+EMP = {
+  "prontomed": 'prontomed: { id: "prontomed", nome: "Prontomed", completo: "Clínica Prontomed e Multidisciplinar", cor: "var(--emp-prontomed)", modulo: () => Prontomed },',
+  "imunne": 'imunne: { id: "imunne", nome: "IMUNNE", completo: "Iguatu, Icó, Cajazeiras e CD de vacinas", cor: "var(--emp-iguatu)", modulo: () => Imunne },',
+}
+TITULO = {"prontomed": "Prontomed | Painel financeiro", "imunne": "IMUNNE | Painel financeiro", "admin": "Administrador | Painel financeiro"}
+def pagina(modo):
+    ids = ["prontomed", "imunne"] if modo == "admin" else [modo]
+    sh = HEAD + f'const MODO = "{modo}";\n' + SHELL_SRC.replace("/*EMPRESAS*/", "const EMPRESAS = {\n" + "\n".join(EMP[i] for i in ids) + "\n};")
+    pjs = PJS if "prontomed" in ids else ""
+    ijs = IJS if "imunne" in ids else ""
+    if modo != "admin":
+        outra = ["iguatu", "ico", "cajazeiras", "cd", "sem_centro"] if modo == "prontomed" else ["prontomed", "multidisciplinar"]
+        sh = sh.replace('  if (j.dados.imunne && typeof Imunne !== "undefined") dados.imunne = Imunne.montarRaw(j.dados.imunne);\n', "" if modo == "prontomed" else '  if (j.dados.imunne) dados.imunne = Imunne.montarRaw(j.dados.imunne);\n')
+        sh = sh.replace('  if (j.dados.prontomed) dados.prontomed = j.dados.prontomed;\n', "" if modo == "imunne" else '  if (j.dados.prontomed) dados.prontomed = j.dados.prontomed;\n')
+        return montar(TITULO[modo], pjs, ijs, sh, outra)
+    return montar(TITULO[modo], pjs, ijs, sh, [])
+
+def limpar_css(css, outras):
+    if not outras: return css
+    alt = "|".join(outras)
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    css = re.sub(r"--emp-(?:%s):[^;]*;\s*" % alt, "", css)
+    css = "\n".join(l for l in css.split("\n") if not re.search(r'\[data-empresa="(?:%s)"\]' % alt, l))
+    return css
+
+def montar(titulo, pjs, ijs, shell, outras):
+    css_ = limpar_css(css, outras)
+    return f"""<!doctype html>
 <html lang="pt-BR"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
-<title>Painéis ACESF</title>
+<title>{titulo}</title>
 {fonts}
 <style>
-{css}
+{css_}
 html, body {{ background: var(--pagina); }}
 body {{ margin: 0; }}
 </style></head><body>
@@ -94,5 +122,13 @@ body {{ margin: 0; }}
 </script>
 </body></html>
 """
-open(root + "/index.html", "w", encoding="utf8").write(html)
-print("index.html gerado:", len(html), "bytes")
+
+RAIZ = """<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex, nofollow"><title>Painel financeiro</title>
+<style>html,body{margin:0;height:100%;background:#12264A}body{display:grid;place-items:center}img{width:min(300px,70vw);height:auto}</style></head><body><img src="LOGO" alt="ACESF Contadores Associados"></body></html>"""
+saidas = {"index.html": RAIZ.replace("LOGO", "data:image/png;base64," + logo)}
+for modo, pasta in [("prontomed", "prontomed"), ("imunne", "imunne"), ("admin", "administrador")]:
+    saidas[f"{pasta}/index.html"] = pagina(modo)
+for nome, conteudo in saidas.items():
+    os.makedirs(os.path.dirname(f"{root}/{nome}") or root, exist_ok=True)
+    open(f"{root}/{nome}", "w", encoding="utf8").write(conteudo)
+    print(nome, len(conteudo), "bytes")

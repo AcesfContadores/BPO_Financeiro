@@ -81,12 +81,14 @@
 .ac-logo { display: block; width: 172px; max-width: 100%; height: auto; }
 @media (max-width: 860px) { .lg-logo { width: 190px; margin-bottom: 8px; } .ac-logo { width: 120px; } }
 
-.lg-marca h1 { font-family: "Jost", "Futura", "Century Gothic", var(--fonte); font-weight: 500; font-size: clamp(30px, 3.6vw, 44px); letter-spacing: .01em; line-height: 1.08; color: #E2E8F4; }
+.lg-marca h1 { font-family: var(--fonte); font-weight: 700; font-size: clamp(30px, 3.6vw, 44px); letter-spacing: .01em; line-height: 1.08; color: #E2E8F4; }
 .lg-marca p { color: #B4C2DE; }
-.lg-painel h2 { font-family: "Jost", "Futura", "Century Gothic", var(--fonte); font-weight: 600; font-size: 26px; letter-spacing: .01em; }
+.lg-painel h2 { font-family: var(--fonte); font-weight: 700; font-size: 26px; letter-spacing: .01em; }
 
 .ac-atu { border: 1px solid rgba(255, 255, 255, .28); background: rgba(255, 255, 255, .08); color: #fff; border-radius: 8px; padding: 8px 10px; font-weight: 600; font-size: 13px; }
 .ac-atu:hover:not(:disabled) { background: rgba(255, 255, 255, .16); }
 .ac-atu:disabled { opacity: .7; cursor: progress; }
 .ac-pe .carimbo { display: grid; gap: 2px; line-height: 1.35; }
 @media (max-width: 860px) { .ac-atu { padding: 6px 9px; font-size: 12px; } }
+
+.lg-marca .lg-empresa { font-size: 16px; font-weight: 600; color: #E2E8F4; margin-top: 2px; }

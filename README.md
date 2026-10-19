@@ -1,6 +1,13 @@
 # Painéis financeiros ACESF
 
-Página única com login por empresa (Prontomed e IMUNNE) e acesso de administrador, **ligada ao banco em tempo real** (Supabase).
+Uma página de login para cada perfil,  **ligada ao banco em tempo real** (Supabase).
+
+## Endereços
+- `/prontomed/`: só a Prontomed (a página não contém nada da IMUNNE).
+- `/imunne/`: só a IMUNNE (nada da Prontomed).
+- `/administrador/`: vê as duas empresas, com menu lateral.
+- `/` (raiz): só o logo, sem links.
+Cada perfil só entra com a própria senha; a senha de outra empresa é recusada no banco.
 
 ## Como funciona
 - O `index.html` não contém nenhum dado financeiro nem senha. Ele só tem a URL e a chave pública (`anon`) do Supabase.
@@ -11,7 +18,7 @@ Página única com login por empresa (Prontomed e IMUNNE) e acesso de administra
 
 ## Publicar no GitHub Pages
 1. Suba esta pasta para um repositório.
-2. *Settings → Pages* → branch e pasta raiz. A página é o `index.html`.
+2. *Settings → Pages* → branch e pasta raiz. As páginas são `prontomed/index.html`, `imunne/index.html` e `administrador/index.html`.
 
 ## Trocar senhas (SQL Editor do Supabase)
 ```sql
@@ -22,7 +29,7 @@ where papel = 'prontomed'; -- ou 'imunne' / 'admin'
 Use senhas longas. A senha nunca fica no repositório.
 
 ## Alterar o código
-`python3 build.py` gera um novo `index.html` (só biblioteca padrão). `ACESF_API_URL` e `ACESF_API_KEY` podem ser passadas por variável de ambiente.
+`python3 build.py` gera de novo as 4 páginas (só biblioteca padrão). `ACESF_API_URL` e `ACESF_API_KEY` podem ser passadas por variável de ambiente.
 
 ## Estrutura
 - `src/prontomed/js`, `src/imunne/js`: os dois painéis (JS puro).
