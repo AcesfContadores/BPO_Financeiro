@@ -6,6 +6,7 @@ Uma página de login para cada perfil,  **ligada ao banco em tempo real** (Supab
 - `/prontomed/`: só a Prontomed (a página não contém nada da IMUNNE).
 - `/imunne/`: só a IMUNNE (nada da Prontomed).
 - `/administrador/`: vê as duas empresas, com menu lateral.
+- `/teste/`: Empresa Modelo, sem login, com dados fictícios embutidos (`src/teste/modelo.json`). Não consulta o banco.
 - `/` (raiz): só o logo, sem links.
 Cada perfil só entra com a própria senha; a senha de outra empresa é recusada no banco.
 

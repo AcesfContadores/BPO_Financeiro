@@ -4811,11 +4811,11 @@ async function abrirPainel(s) {
   raiz.replaceChildren();
   const menu = h("nav", { class: "menu", "aria-label": "Empresas e telas" });
   const carimbo = h("p", { class: "carimbo dim", "aria-live": "polite" });
-  const botaoAtu = h("button", { type: "button", class: "ac-atu", text: "Atualizar agora", onClick: () => atualizar(false) });
+  const botaoAtu = h("button", { type: "button", class: "ac-atu", text: "Atualizar agora", hidden: !!s.demo, onClick: () => atualizar(false) });
   let ultimo = s.buscadoEm, falhou = false, emAndamento = false;
   const conteudo = h("div", { class: "centro acesf-centro" });
-  const sair = h("button", { type: "button", class: "ac-sair", text: "Sair", onClick: encerrar });
-  const eu = h("p", { class: "ac-eu" }, h("small", { text: s.admin ? "Administrador" : "Acesso" }), h("strong", { text: s.admin ? "ACESF" : EMPRESAS[s.papel].nome }));
+  const sair = h("button", { type: "button", class: "ac-sair", text: "Sair", hidden: !!s.demo, onClick: encerrar });
+  const eu = h("p", { class: "ac-eu" }, h("small", { text: s.admin ? "Administrador" : s.demo ? "Demonstração" : "Acesso" }), h("strong", { text: s.admin ? "ACESF" : EMPRESAS[s.papel].nome }));
   raiz.append(h("div", { class: "casca ac-casca" },
     h("header", { class: "lateral" }, h("div", { class: "marca-app" }, h("img", { class: "ac-logo", src: LOGO, alt: "ACESF Contadores Associados" })), menu, h("div", { class: "ac-pe" }, carimbo, botaoAtu, eu, sair)),
     conteudo));
@@ -4862,9 +4862,9 @@ async function abrirPainel(s) {
   const diaHora = (iso) => new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
   function pintarCarimbo() {
     const sync = s.dados[ativa]?.ultima_sincronizacao;
-    carimbo.replaceChildren(
-      h("span", {}, `${falhou ? "Sem conexão. Último dado: " : "Atualizado às "}${hhmm(ultimo)}`),
-      sync ? h("span", {}, `Nibo sincronizado em ${diaHora(sync)}`) : null);
+    carimbo.replaceChildren(...[
+      s.demo ? h("span", {}, "Dados fictícios de demonstração") : h("span", {}, `${falhou ? "Sem conexão. Último dado: " : "Atualizado às "}${hhmm(ultimo)}`),
+      sync && !s.demo ? h("span", {}, `Nibo sincronizado em ${diaHora(sync)}`) : null].filter(Boolean));
   }
   async function atualizar(auto) {
     if (emAndamento) return;
@@ -4887,8 +4887,8 @@ async function abrirPainel(s) {
     }
   }
   const ATUALIZA_A_CADA = 5 * 60 * 1000;
-  timerAtu = setInterval(() => { if (!document.hidden) atualizar(true); }, ATUALIZA_A_CADA);
-  document.addEventListener("visibilitychange", () => { if (!document.hidden && sessao && Date.now() - ultimo.getTime() > 2 * 60 * 1000) atualizar(true); });
+  if (!s.demo) timerAtu = setInterval(() => { if (!document.hidden) atualizar(true); }, ATUALIZA_A_CADA);
+  if (!s.demo) document.addEventListener("visibilitychange", () => { if (!document.hidden && sessao && Date.now() - ultimo.getTime() > 2 * 60 * 1000) atualizar(true); });
   desenharMenu();
   await irPara(ids[0], null);
 }
@@ -4900,7 +4900,10 @@ function encerrar() {
   telaLogin();
 }
 
-telaLogin();
+if (MODO === "teste") {
+  // Demonstração: sem login e sem banco. Os dados vão embutidos e são fictícios.
+  abrirPainel({ papel: "teste", usuario: "teste", admin: false, dados: { teste: MODELO }, buscadoEm: new Date(), cred: null, demo: true });
+} else telaLogin();
 
 </script>
 </body></html>

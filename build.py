@@ -37,7 +37,14 @@ def bundle(dirname, entry_export_name):
         out.append(f'__d["{name}"] = function () {{\n{src}\nreturn {{ {", ".join(dict.fromkeys(exports))} }};\n}};')
     return "const %s = (function () {\nconst __d = {}, __c = {};\nfunction __r(n) { return __c[n] ??= __d[n](); }\n%s\nreturn __r(\"app.js\");\n})();\n" % (entry_export_name, "\n".join(out))
 
-PJS = bundle("src/prontomed/js", "Prontomed"); IJS = bundle("src/imunne/js", "Imunne")
+PJS = bundle("src/prontomed/js", "Prontomed")
+_t = PJS
+for a, c in [("Painel Prontomed", "Painel Empresa Modelo"), ("Clínica Prontomed", "Clínica Modelo"), ("Grupo Prontomed", "Grupo Modelo"), ('curto: "Prontomed"', 'curto: "Modelo"'), ('"Prontomed"', '"Modelo"'), ("Multidisciplinar", "Terapias"), ("Prontomed", "Empresa Modelo")]:
+    _t = _t.replace(a, c)
+_t = _t.replace("const Empresa Modelo = (function", "const Prontomed = (function")
+_t = re.sub(r"const REFERENCIA = \{.*?\n\};", "const REFERENCIA = {};", _t, flags=re.S)
+PJS_TESTE = _t
+IJS = bundle("src/imunne/js", "Imunne")
 logo = base64.b64encode(open(root + "/assets/logo.png", "rb").read()).decode()
 SHELL_SRC = open(f"{root}/src/shell/shell.js", encoding="utf8").read()
 HEAD = f'const ACESF_API = {{ url: "{API_URL}", key: "{API_KEY}" }};\nconst LOGO = "data:image/png;base64,{logo}";\n'
@@ -69,16 +76,19 @@ fonts = '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=M
 
 EMP = {
   "prontomed": 'prontomed: { id: "prontomed", nome: "Prontomed", completo: "Clínica Prontomed e Multidisciplinar", cor: "var(--emp-prontomed)", modulo: () => Prontomed },',
+  "teste": 'teste: { id: "teste", nome: "Empresa Modelo", completo: "Clínica Modelo e Terapias Modelo (dados fictícios)", cor: "var(--emp-prontomed)", modulo: () => Prontomed },',
   "imunne": 'imunne: { id: "imunne", nome: "IMUNNE", completo: "Iguatu, Icó, Cajazeiras e CD de vacinas", cor: "var(--emp-iguatu)", modulo: () => Imunne },',
 }
-TITULO = {"prontomed": "Prontomed | Painel financeiro", "imunne": "IMUNNE | Painel financeiro", "admin": "Administrador | Painel financeiro"}
+TITULO = {"teste": "Empresa Modelo | Painel financeiro", "prontomed": "Prontomed | Painel financeiro", "imunne": "IMUNNE | Painel financeiro", "admin": "Administrador | Painel financeiro"}
 def pagina(modo):
     ids = ["prontomed", "imunne"] if modo == "admin" else [modo]
-    sh = HEAD + f'const MODO = "{modo}";\n' + SHELL_SRC.replace("/*EMPRESAS*/", "const EMPRESAS = {\n" + "\n".join(EMP[i] for i in ids) + "\n};")
-    pjs = PJS if "prontomed" in ids else ""
+    pjs_ = PJS_TESTE if modo == "teste" else PJS
+    extra = ("const MODELO = " + open(f"{root}/src/teste/modelo.json", encoding="utf8").read() + ";\n") if modo == "teste" else ""
+    sh = HEAD + extra + f'const MODO = "{modo}";\n' + SHELL_SRC.replace("/*EMPRESAS*/", "const EMPRESAS = {\n" + "\n".join(EMP[i] for i in ids) + "\n};")
+    pjs = pjs_ if modo in ("prontomed", "admin", "teste") else ""
     ijs = IJS if "imunne" in ids else ""
     if modo != "admin":
-        outra = ["iguatu", "ico", "cajazeiras", "cd", "sem_centro"] if modo == "prontomed" else ["prontomed", "multidisciplinar"]
+        outra = ["iguatu", "ico", "cajazeiras", "cd", "sem_centro"] if modo in ("prontomed", "teste") else ["prontomed", "multidisciplinar"]
         sh = sh.replace('  if (j.dados.imunne && typeof Imunne !== "undefined") dados.imunne = Imunne.montarRaw(j.dados.imunne);\n', "" if modo == "prontomed" else '  if (j.dados.imunne) dados.imunne = Imunne.montarRaw(j.dados.imunne);\n')
         sh = sh.replace('  if (j.dados.prontomed) dados.prontomed = j.dados.prontomed;\n', "" if modo == "imunne" else '  if (j.dados.prontomed) dados.prontomed = j.dados.prontomed;\n')
         return montar(TITULO[modo], pjs, ijs, sh, outra)
@@ -126,7 +136,7 @@ body {{ margin: 0; }}
 RAIZ = """<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex, nofollow"><title>Painel financeiro</title>
 <style>html,body{margin:0;height:100%;background:#12264A}body{display:grid;place-items:center}img{width:min(300px,70vw);height:auto}</style></head><body><img src="LOGO" alt="ACESF Contadores Associados"></body></html>"""
 saidas = {"index.html": RAIZ.replace("LOGO", "data:image/png;base64," + logo)}
-for modo, pasta in [("prontomed", "prontomed"), ("imunne", "imunne"), ("admin", "administrador")]:
+for modo, pasta in [("teste", "teste"), ("prontomed", "prontomed"), ("imunne", "imunne"), ("admin", "administrador")]:
     saidas[f"{pasta}/index.html"] = pagina(modo)
 for nome, conteudo in saidas.items():
     os.makedirs(os.path.dirname(f"{root}/{nome}") or root, exist_ok=True)
