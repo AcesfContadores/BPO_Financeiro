@@ -2,8 +2,8 @@
 // ela foi feita para ficar no navegador. O acesso é limitado à função painel_publico(),
 // que só devolve dados das tabelas painel_* (somente leitura).
 export const CONFIG = {
-  SUPABASE_URL: "https://cnzsujluejjptxofxxsr.supabase.co",
-  SUPABASE_KEY: "sb_publishable_dU1f80Y3yp3iGiZPfPRzLA_d0IAeXGM",
+  SUPABASE_URL: "https://uabghobxbzobvmzfyzzi.supabase.co",
+  SUPABASE_KEY: "sb_publishable_wakfEwoYb-dVz26AfdKZxw_VUbGkqNo",
   RPC: "painel_publico",
   // Competência exibida por padrão (YYYY-MM). Se vazio, usa o último mês com dados de receita.
   COMPETENCIA_PADRAO: "2026-09",

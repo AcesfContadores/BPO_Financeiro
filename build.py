@@ -6,8 +6,8 @@ import re, os, base64, pathlib
 root = str(pathlib.Path(__file__).resolve().parent)
 
 # Chave pública (anon) do projeto Supabase: pode ficar no arquivo. Quem protege os dados é o login no banco.
-API_URL = os.environ.get("ACESF_API_URL", "https://cnzsujluejjptxofxxsr.supabase.co")
-API_KEY = os.environ.get("ACESF_API_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNuenN1amx1ZWpqcHR4b2Z4eHNyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk0NTI4MzQsImV4cCI6MjEwNTAyODgzNH0.vmVkztn8rb25UxjEReM7wyUkIg3NVQ1ZfQCqZ55V-vo")
+API_URL = os.environ.get("ACESF_API_URL", "https://uabghobxbzobvmzfyzzi.supabase.co")
+API_KEY = os.environ.get("ACESF_API_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVhYmdob2J4YnpvYnZtemZ5enppIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE1NTI0ODgsImV4cCI6MjEwNzEyODQ4OH0.0ECiRsM_C5HtMX-q4qtEb_Sq91G8ME3HdRkA6yNZ82w")
 
 def bundle(dirname, entry_export_name):
     mods = {}

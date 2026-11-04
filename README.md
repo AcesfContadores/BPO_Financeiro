@@ -1,6 +1,6 @@
 # Painéis financeiros ACESF
 
-Uma página de login para cada perfil,  **ligada ao banco em tempo real** (Supabase).
+Uma página de login para cada perfil,  **ligada ao banco em tempo real** (Supabase, projeto **Acesf-dev**).
 
 ## Endereços
 - `/prontomed/`: só a Prontomed (a página não contém nada da IMUNNE).
