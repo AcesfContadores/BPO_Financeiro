@@ -44,7 +44,9 @@ for a, c in [("Painel Prontomed", "Painel Empresa Modelo"), ("Clínica Prontomed
 _t = _t.replace("const Empresa Modelo = (function", "const Prontomed = (function")
 _t = re.sub(r"const REFERENCIA = \{.*?\n\};", "const REFERENCIA = {};", _t, flags=re.S)
 PJS_TESTE = _t
+PJS_DEMO = _t.replace("const Prontomed = (function", "const ProntomedTeste = (function", 1)
 IJS = bundle("src/imunne/js", "Imunne")
+EJS = bundle("src/epereira/js", "Epereira")
 logo = base64.b64encode(open(root + "/assets/logo.png", "rb").read()).decode()
 SHELL_SRC = open(f"{root}/src/shell/shell.js", encoding="utf8").read()
 HEAD = f'const ACESF_API = {{ url: "{API_URL}", key: "{API_KEY}" }};\nconst LOGO = "data:image/png;base64,{logo}";\n'
@@ -55,7 +57,7 @@ it = open(root + "/css/tokens-imunne.css", encoding="utf8").read()
 pd = open(root + "/css/dashboard-prontomed.css", encoding="utf8").read()
 idd = open(root + "/css/dashboard-imunne.css", encoding="utf8").read()
 # tokens: parte do Prontomed + variáveis de empresa do IMUNNE
-emp_i = "  --emp-iguatu: #3F6FC4;\n  --emp-ico: #E07A5F;\n  --emp-cajazeiras: #2BB39A;\n  --emp-cd: #8E7CC3;\n  --emp-sem_centro: #98A4B3;\n"
+emp_i = "  --emp-epereira: #B5532F;\n  --emp-iguatu: #3F6FC4;\n  --emp-ico: #E07A5F;\n  --emp-cajazeiras: #2BB39A;\n  --emp-cd: #8E7CC3;\n  --emp-sem_centro: #98A4B3;\n"
 pt = pt.replace("  --emp-grupo: #C9A96E;\n", "  --emp-grupo: #C9A96E;\n" + emp_i, 1)
 sel_i = "".join(f'[data-empresa="{e}"] {{ --emp: var(--emp-{e}); }}\n' for e in ["iguatu", "ico", "cajazeiras", "cd", "sem_centro"])
 tok = pt.replace('body[data-empresa=', '[data-empresa=') + "\n" + sel_i
@@ -77,22 +79,27 @@ fonts = '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=M
 EMP = {
   "prontomed": 'prontomed: { id: "prontomed", nome: "Prontomed", completo: "Clínica Prontomed e Multidisciplinar", cor: "var(--emp-prontomed)", modulo: () => Prontomed },',
   "teste": 'teste: { id: "teste", nome: "Empresa Modelo", completo: "Clínica Modelo e Terapias Modelo (dados fictícios)", cor: "var(--emp-prontomed)", modulo: () => Prontomed },',
+  "epereira": 'epereira: { id: "epereira", nome: "E. Pereira Cavalcante", completo: "E. Pereira Cavalcante (pizzaria, buffet e eventos)", cor: "var(--emp-epereira)", modulo: () => Epereira },',
   "imunne": 'imunne: { id: "imunne", nome: "IMUNNE", completo: "Iguatu, Icó, Cajazeiras e CD de vacinas", cor: "var(--emp-iguatu)", modulo: () => Imunne },',
 }
-TITULO = {"teste": "Empresa Modelo | Painel financeiro", "prontomed": "Prontomed | Painel financeiro", "imunne": "IMUNNE | Painel financeiro", "admin": "Administrador | Painel financeiro"}
+EMP_DEMO = 'teste: { id: "teste", nome: "Empresa Modelo", completo: "Clínica Modelo e Terapias Modelo (dados fictícios)", cor: "var(--emp-prontomed)", modulo: () => ProntomedTeste },'
+TITULO = {"teste": "Empresa Modelo | Painel financeiro", "prontomed": "Prontomed | Painel financeiro", "imunne": "IMUNNE | Painel financeiro", "epereira": "E. Pereira Cavalcante | Painel financeiro", "portal": "Painel financeiro", "admin": "Administrador | Painel financeiro"}
 def pagina(modo):
-    ids = ["prontomed", "imunne"] if modo == "admin" else [modo]
+    ids = ["prontomed", "imunne", "epereira"] if modo in ("admin", "portal") else [modo]
     pjs_ = PJS_TESTE if modo == "teste" else PJS
-    extra = ("const MODELO = " + open(f"{root}/src/teste/modelo.json", encoding="utf8").read() + ";\n") if modo == "teste" else ""
-    sh = HEAD + extra + f'const MODO = "{modo}";\n' + SHELL_SRC.replace("/*EMPRESAS*/", "const EMPRESAS = {\n" + "\n".join(EMP[i] for i in ids) + "\n};")
-    pjs = pjs_ if modo in ("prontomed", "admin", "teste") else ""
+    extra = ("const MODELO = " + open(f"{root}/src/teste/modelo.json", encoding="utf8").read() + ";\n") if modo in ("teste", "portal") else ""
+    sh = HEAD + extra + f'const MODO = "{modo}";\n' + SHELL_SRC.replace("/*EMPRESAS*/", "const EMPRESAS = {\n" + "\n".join([EMP[i] for i in ids] + ([EMP_DEMO] if modo == "portal" else [])) + "\n};")
+    pjs = pjs_ if modo in ("prontomed", "admin", "teste", "portal") else ""
+    if modo == "portal": pjs = pjs_ + "\n" + PJS_DEMO
     ijs = IJS if "imunne" in ids else ""
-    if modo != "admin":
-        outra = ["iguatu", "ico", "cajazeiras", "cd", "sem_centro"] if modo in ("prontomed", "teste") else ["prontomed", "multidisciplinar"]
-        sh = sh.replace('  if (j.dados.imunne && typeof Imunne !== "undefined") dados.imunne = Imunne.montarRaw(j.dados.imunne);\n', "" if modo == "prontomed" else '  if (j.dados.imunne) dados.imunne = Imunne.montarRaw(j.dados.imunne);\n')
-        sh = sh.replace('  if (j.dados.prontomed) dados.prontomed = j.dados.prontomed;\n', "" if modo == "imunne" else '  if (j.dados.prontomed) dados.prontomed = j.dados.prontomed;\n')
-        return montar(TITULO[modo], pjs, ijs, sh, outra)
-    return montar(TITULO[modo], pjs, ijs, sh, [])
+    ejs = EJS if "epereira" in ids else ""
+    if modo not in ("admin", "portal"):
+        outra = ["iguatu", "ico", "cajazeiras", "cd", "sem_centro", "epereira"] if modo in ("prontomed", "teste") else (["prontomed", "multidisciplinar", "iguatu", "ico", "cajazeiras", "cd", "imunne"] if modo == "epereira" else ["prontomed", "multidisciplinar", "epereira"])
+        sh = sh.replace('  if (j.dados.imunne && typeof Imunne !== "undefined") dados.imunne = Imunne.montarRaw(j.dados.imunne);\n', "" if modo != "imunne" else '  if (j.dados.imunne) dados.imunne = Imunne.montarRaw(j.dados.imunne);\n')
+        sh = sh.replace('  if (j.dados.prontomed) dados.prontomed = j.dados.prontomed;\n', "" if modo not in ("prontomed", "teste") else '  if (j.dados.prontomed) dados.prontomed = j.dados.prontomed;\n')
+        sh = sh.replace('  if (j.dados.epereira && typeof Epereira !== "undefined") dados.epereira = Epereira.montarRaw(j.dados.epereira);\n', "" if modo != "epereira" else '  if (j.dados.epereira) dados.epereira = Epereira.montarRaw(j.dados.epereira);\n')
+        return montar(TITULO[modo], pjs, ijs, ejs, sh, outra)
+    return montar(TITULO[modo], pjs, ijs, ejs, sh, [])
 
 def limpar_css(css, outras):
     if not outras: return css
@@ -102,7 +109,7 @@ def limpar_css(css, outras):
     css = "\n".join(l for l in css.split("\n") if not re.search(r'\[data-empresa="(?:%s)"\]' % alt, l))
     return css
 
-def montar(titulo, pjs, ijs, shell, outras):
+def montar(titulo, pjs, ijs, ejs, shell, outras):
     css_ = limpar_css(css, outras)
     return f"""<!doctype html>
 <html lang="pt-BR"><head><meta charset="utf-8">
@@ -128,6 +135,7 @@ body {{ margin: 0; }}
 <script>
 {pjs}
 {ijs}
+{ejs}
 {shell}
 </script>
 </body></html>
@@ -135,9 +143,11 @@ body {{ margin: 0; }}
 
 RAIZ = """<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex, nofollow"><title>Painel financeiro</title>
 <style>html,body{margin:0;height:100%;background:#12264A}body{display:grid;place-items:center}img{width:min(300px,70vw);height:auto}</style></head><body><img src="LOGO" alt="ACESF Contadores Associados"></body></html>"""
-saidas = {"index.html": RAIZ.replace("LOGO", "data:image/png;base64," + logo)}
-for modo, pasta in [("teste", "teste"), ("prontomed", "prontomed"), ("imunne", "imunne"), ("admin", "administrador")]:
-    saidas[f"{pasta}/index.html"] = pagina(modo)
+REDIR = """<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex, nofollow"><title>Painel financeiro</title><meta http-equiv="refresh" content="0;url=../"></head><body><script>location.replace("../");</script></body></html>"""
+# Uma única tela de login na raiz: o usuário digitado define qual painel abre. Os endereços antigos redirecionam para ela.
+saidas = {"index.html": pagina("portal"), "teste/index.html": pagina("teste")}
+for pasta in ["prontomed", "imunne", "epereira", "administrador"]:
+    saidas[f"{pasta}/index.html"] = REDIR
 for nome, conteudo in saidas.items():
     os.makedirs(os.path.dirname(f"{root}/{nome}") or root, exist_ok=True)
     open(f"{root}/{nome}", "w", encoding="utf8").write(conteudo)

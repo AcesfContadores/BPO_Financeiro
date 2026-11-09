@@ -35,11 +35,12 @@ async function chamarBanco(usuario, senha) {
   const dados = {};
   if (j.dados.prontomed) dados.prontomed = j.dados.prontomed;
   if (j.dados.imunne && typeof Imunne !== "undefined") dados.imunne = Imunne.montarRaw(j.dados.imunne);
+  if (j.dados.epereira && typeof Epereira !== "undefined") dados.epereira = Epereira.montarRaw(j.dados.epereira);
   return { papel: j.papel, usuario: j.usuario, dados, admin: j.papel === "admin", buscadoEm: new Date(j.gerado_em ?? Date.now()) };
 }
 async function abrir(papel, usuario, senha) {
   const s = await chamarBanco(usuario, senha);
-  if (s.papel !== papel) throw new ErroLogin("credenciais"); // senha de outra empresa não abre esta
+  if (papel && s.papel !== papel) throw new ErroLogin("credenciais"); // página de uma empresa: senha de outra não abre
   s.cred = { usuario, senha };
   return s;
 }
@@ -51,7 +52,7 @@ const raiz = document.getElementById("acesf");
 // ───────────────────────── login ─────────────────────────
 function telaLogin() {
   raiz.replaceChildren();
-  let escolha = MODO;
+  const escolha = MODO === "portal" ? null : MODO; // portal: o próprio usuário digitado define o painel
   const aviso = h("p", { class: "lg-erro", role: "alert", "aria-live": "assertive" });
   const usuario = h("input", { id: "lg-usuario", type: "text", autocomplete: "username", autocapitalize: "none", spellcheck: "false", required: true });
   const senha = h("input", { id: "lg-senha", type: "password", autocomplete: "current-password", required: true });
@@ -64,13 +65,19 @@ function telaLogin() {
     h("label", { class: "lg-campo", for: "lg-senha" }, h("span", { text: "Senha" }), h("span", { class: "lg-senha" }, senha, ver)),
     aviso, entrar);
 
-  cab.textContent = MODO === "admin" ? "Acesso do administrador" : `Acesso ${EMPRESAS[MODO].nome}`;
+  cab.textContent = MODO === "admin" ? "Acesso do administrador" : MODO === "portal" ? "Acesso ao painel" : `Acesso ${EMPRESAS[MODO].nome}`;
 
   const form = h("form", { class: "lg-form", novalidate: true, onSubmit: async (ev) => {
     ev.preventDefault();
     if (!usuario.value.trim() || !senha.value) { aviso.textContent = "Informe usuário e senha."; return; }
     entrar.disabled = true; entrar.textContent = "Abrindo…"; aviso.textContent = "";
     try {
+      // usuário de demonstração: não consulta o banco, abre a Empresa Modelo com dados fictícios
+      if (MODO === "portal" && typeof MODELO !== "undefined" && usuario.value.trim().toLowerCase() === "teste" && senha.value === "teste") {
+        senha.value = "";
+        await abrirPainel({ papel: "teste", usuario: "teste", admin: false, dados: { teste: MODELO }, buscadoEm: new Date(), cred: null, demo: true });
+        return;
+      }
       const sessao = await abrir(escolha, usuario.value, senha.value);
       senha.value = "";
       await abrirPainel(sessao);
@@ -84,7 +91,7 @@ function telaLogin() {
     h("section", { class: "lg-marca" },
       h("img", { class: "lg-logo", src: LOGO, alt: "ACESF Contadores Associados" }),
       h("h1", { text: "Painel financeiro" }),
-      h("p", { class: "lg-empresa", text: MODO === "admin" ? "Administrador ACESF" : EMPRESAS[MODO].completo }),
+      h("p", { class: "lg-empresa", text: MODO === "admin" ? "Administrador ACESF" : MODO === "portal" ? "ACESF Contadores Associados" : EMPRESAS[MODO].completo }),
       h("p", { class: "lg-nota", text: "Acesso restrito." })),
     h("section", { class: "lg-painel", "aria-labelledby": "lg-titulo" }, h("h2", { id: "lg-titulo", text: "Entrar" }), form)));
 }
@@ -96,14 +103,14 @@ const aberto = new Set();
 
 async function abrirPainel(s) {
   sessao = s;
-  const ids = s.admin ? Object.keys(EMPRESAS) : [s.papel];
+  const ids = s.admin ? Object.keys(EMPRESAS).filter((k) => k !== "teste") : [s.papel];
   raiz.replaceChildren();
   const menu = h("nav", { class: "menu", "aria-label": "Empresas e telas" });
   const carimbo = h("p", { class: "carimbo dim", "aria-live": "polite" });
   const botaoAtu = h("button", { type: "button", class: "ac-atu", text: "Atualizar agora", hidden: !!s.demo, onClick: () => atualizar(false) });
   let ultimo = s.buscadoEm, falhou = false, emAndamento = false;
   const conteudo = h("div", { class: "centro acesf-centro" });
-  const sair = h("button", { type: "button", class: "ac-sair", text: "Sair", hidden: !!s.demo, onClick: encerrar });
+  const sair = h("button", { type: "button", class: "ac-sair", text: "Sair", hidden: !!s.demo && MODO === "teste", onClick: encerrar });
   const eu = h("p", { class: "ac-eu" }, h("small", { text: s.admin ? "Administrador" : s.demo ? "Demonstração" : "Acesso" }), h("strong", { text: s.admin ? "ACESF" : EMPRESAS[s.papel].nome }));
   raiz.append(h("div", { class: "casca ac-casca" },
     h("header", { class: "lateral" }, h("div", { class: "marca-app" }, h("img", { class: "ac-logo", src: LOGO, alt: "ACESF Contadores Associados" })), menu, h("div", { class: "ac-pe" }, carimbo, botaoAtu, eu, sair)),
@@ -125,7 +132,11 @@ async function abrirPainel(s) {
         sub.append(h("a", { href: "#", class: on ? "on" : "", "aria-current": on ? "page" : null, style: { "--emp": e.cor }, onClick: (ev) => { ev.preventDefault(); irPara(id, p); } }, svg(t.icone), h("span", { text: t.nome })));
       }
       const cab = s.admin
-        ? h("button", { type: "button", class: "emp-btn" + (ativa === id ? " on" : ""), "aria-expanded": String(abertoAgora), "aria-controls": `sub-${id}`, style: { "--c": e.cor }, onClick: () => { if (ativa === id) { aberto.has(id) ? aberto.delete(id) : aberto.add(id); desenharMenu(); } else irPara(id, null); } },
+        ? h("button", { type: "button", class: "emp-btn" + (ativa === id ? " on" : ""), "aria-expanded": String(abertoAgora), "aria-controls": `sub-${id}`, style: { "--c": e.cor }, onClick: () => {
+            const isOpen = aberto.has(id);
+            if (ativa === id && isOpen) { aberto.delete(id); desenharMenu(); }
+            else irPara(id, null);
+          } },
             h("i"), h("span", { text: e.nome }), h("b", { class: "chev", "aria-hidden": "true", text: "▸" }))
         : h("p", { class: "emp-fixo", style: { "--c": e.cor } }, h("i"), h("span", { text: e.nome }));
       menu.append(h("div", { class: "emp-bloco" + (abertoAgora ? " aberto" : "") }, cab, sub));

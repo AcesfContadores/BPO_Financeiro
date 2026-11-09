@@ -360,6 +360,7 @@ body.com-gaveta { overflow: hidden; }
 .emp-btn .chev { font-size: 12px; color: #B9C6E0; transition: transform .15s; }
 .emp-btn[aria-expanded="true"] .chev { transform: rotate(90deg); }
 .emp-bloco .sub { display: grid; gap: 2px; padding: 2px 0 6px 12px; }
+.emp-bloco .sub[hidden] { display: none; }
 .emp-bloco .sub a { display: flex; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 8px; color: #D5DEF1; text-decoration: none; font-weight: 500; font-size: 13px; }
 .emp-bloco .sub a:hover { background: rgba(255, 255, 255, .08); }
 .emp-bloco .sub a.on { background: rgba(255, 255, 255, .14); color: #fff; font-weight: 700; box-shadow: inset 3px 0 0 var(--emp, var(--dourado)); }
@@ -437,544 +438,248 @@ body { margin: 0; }
 const Prontomed = (function () {
 const __d = {}, __c = {};
 function __r(n) { return __c[n] ??= __d[n](); }
-__d["util.js"] = function () {
-// Utilidades de DOM, formatação e tooltip. Textos vindos de dados sempre entram via textContent.
-const { fInt } = __r("api.js");
+__d["api.js"] = function () {
+// Camada de dados do painel (sem dependências). Busca tudo numa chamada e oferece helpers de leitura.
+const { CONFIG } = __r("config.js");
 
-const SVG_NS = "http://www.w3.org/2000/svg";
-const SVG_TAGS = new Set(["svg", "g", "path", "line", "rect", "circle", "text", "tspan", "title", "defs", "clipPath", "linearGradient", "stop", "polyline"]);
-
-function el(tag, attrs = {}, ...filhos) {
-  const n = SVG_TAGS.has(tag) ? document.createElementNS(SVG_NS, tag) : document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs ?? {})) {
-    if (v == null || v === false) continue;
-    if (k === "class") n.setAttribute("class", v);
-    else if (k === "style" && typeof v === "object") Object.assign(n.style, v);
-    else if (k.startsWith("on") && typeof v === "function") n.addEventListener(k.slice(2).toLowerCase(), v);
-    else if (k === "text") n.textContent = v;
-    else if ((k === "fill" || k === "stroke" || k === "stop-color") && typeof v === "string" && v.startsWith("var(")) n.style.setProperty(k, v);
-    else n.setAttribute(k, v === true ? "" : v);
-  }
-  for (const f of filhos.flat()) {
-    if (f == null || f === false) continue;
-    n.append(f.nodeType ? f : document.createTextNode(String(f)));
-  }
-  return n;
+let RAW = null;
+function definirDados(r) { RAW = r; }
+async function carregarPainel() {
+  return indexar(RAW);
 }
 
-const limpar = (n) => { while (n.firstChild) n.removeChild(n.firstChild); return n; };
+// Cria índices: valor[empresa][competencia 'YYYY-MM'][conta] = número
+function indexar(raw) {
+  const contas = new Map(raw.contas.map((c) => [c.codigo, c]));
+  const filhos = new Map();
+  for (const c of raw.contas) if (c.pai) (filhos.get(c.pai) ?? filhos.set(c.pai, []).get(c.pai)).push(c.codigo);
+  const valor = {};
+  const fonte = {};
+  const dre = {};
+  for (const [emp, d] of Object.entries(raw.empresas)) {
+    valor[emp] = {};
+    fonte[emp] = {};
+    for (const v of d.valores) {
+      const mes = v.competencia.slice(0, 7);
+      (valor[emp][mes] ??= {})[v.conta] = Number(v.valor);
+      (fonte[emp][mes] ??= {})[v.conta] = v.fonte;
+    }
+    dre[emp] = {};
+    for (const l of d.dre) dre[emp][l.competencia.slice(0, 7)] = l; // linhas já calculadas pelo banco
+  }
+  const meses = [...new Set(Object.values(raw.empresas).flatMap((d) => d.dre.map((l) => l.competencia.slice(0, 7))))].sort();
+  return { raw, contas, filhos, valor, fonte, dre, meses, empresas: Object.keys(raw.empresas) };
+}
 
-// ───────── formatação pt-BR ─────────
-const nf1 = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+// Valor de uma conta (folha ou subtotal) em um mês. Subtotal = soma dos filhos.
+function v(P, emp, mes, codigo) {
+  const c = P.contas.get(codigo);
+  if (c?.subtotal) return (P.filhos.get(codigo) ?? []).reduce((s, f) => s + v(P, emp, mes, f), 0);
+  return P.valor[emp]?.[mes]?.[codigo] ?? 0;
+}
+
+// Série dos N últimos meses terminando em `mesAtual` (inclusive).
+function janela(P, mesAtual, n = CONFIG.MESES_JANELA) {
+  const i = P.meses.indexOf(mesAtual);
+  return P.meses.slice(Math.max(0, i - n + 1), i + 1);
+}
+
+const soma = (a) => a.reduce((s, x) => s + x, 0);
+const media = (a) => (a.length ? soma(a) / a.length : 0);
+
+// Variação percentual; null quando a base é zero (mostrar "—").
+const varPct = (atual, base) => (base ? ((atual - base) / Math.abs(base)) * 100 : null);
+
+// Formatação pt-BR
 const nf0 = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 0 });
-const fR = (n) => `${n < 0 ? "−" : ""}R$ ${nf0.format(Math.abs(Math.round(n)))}`;
-const fRsig = (n) => (Math.round(n) === 0 ? "R$ 0" : `${n > 0 ? "+" : "−"}R$ ${nf0.format(Math.abs(Math.round(n)))}`);
-const fMilAbs = (n) => `${n < 0 ? "−" : ""}R$ ${nf1.format(Math.abs(n) / 1000)} mil`;
-const fMilSig = (n) => `${n > 0 ? "+" : n < 0 ? "−" : ""}R$ ${nf1.format(Math.abs(n) / 1000)} mil`;
-const fN = (n) => (n < 0 ? "−" : "") + nf0.format(Math.abs(Math.round(n)));
-const fP = (n) => (n == null ? "—" : `${nf1.format(n)}%`);
-const fPsig = (n) => (n == null ? "—" : Math.abs(n) > 999 ? `${n > 0 ? "+" : "−"}999%+` : `${n > 0 ? "+" : n < 0 ? "−" : ""}${nf1.format(Math.abs(n))}%`);
-const fPP = (n) => `${n > 0 ? "+" : n < 0 ? "−" : ""}${nf1.format(Math.abs(n))} p.p.`;
-const compacto = (n) => {
-  const a = Math.abs(n);
-  if (a >= 1e6) return `${nf1.format(n / 1e6)} mi`;
-  if (a >= 1e3) return `${nf0.format(n / 1e3)} mil`;
-  return nf0.format(n);
+const nf1 = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const fInt = (n) => nf0.format(Math.round(n));
+const fMil = (n) => `R$ ${nf1.format(n / 1000)} mil`; // destaques: R$ 274,5 mil
+const fPct = (n) => (n == null ? "—" : `${n > 0 ? "+" : ""}${nf1.format(n)}%`);
+const fPct1 = (n) => `${nf1.format(n)}%`;
+const fPP = (n) => `${n > 0 ? "+" : ""}${nf1.format(n)} p.p.`;
+
+return { definirDados, carregarPainel, v, janela, soma, media, varPct, fInt, fMil, fPct, fPct1, fPP };
+};
+__d["app.js"] = function () {
+// Casca do painel: carrega os dados, desenha filtros e menu, roteia pelas telas e abre o painel "Destrinchar".
+const { carregarPainel, definirDados } = __r("api.js");
+const { CONFIG } = __r("config.js");
+const { el, limpar, esconderTip } = __r("util.js");
+const { S, PAGINAS, lerHash, paraHash, ir, setHash, onRota } = __r("state.js");
+const { EMP, mesLongo, mesCurto } = __r("model.js");
+const { renderDrawer } = __r("drawer.js");
+const { renderResumo } = __r("views\resumo.js");
+const { renderReceitas } = __r("views\receitas.js");
+const { renderCustos } = __r("views\custos.js");
+const { renderMargem } = __r("views\margem.js");
+const { renderCaixa } = __r("views\caixa.js");
+const { renderDados } = __r("views\dados.js");
+const { renderComparativo } = __r("views\comparativo.js");
+
+const TELAS = {
+  resumo: { nome: "Resumo", titulo: "Resumo do mês", fn: renderResumo, icone: "M3 12l9-8 9 8v8a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z" },
+  receitas: { nome: "Receitas", titulo: "Receitas", fn: renderReceitas, icone: "M4 20V10m6 10V4m6 16v-7m6 7H2" },
+  custos: { nome: "Custos e despesas", titulo: "Custos e despesas", fn: renderCustos, icone: "M3 5h18M3 12h12M3 19h7" },
+  margem: { nome: "Margem e equilíbrio", titulo: "Margem e ponto de equilíbrio", fn: renderMargem, icone: "M4 19L20 5M7 8a2 2 0 1 0 0-.01M17 18a2 2 0 1 0 0-.01" },
+  caixa: { nome: "Caixa", titulo: "Caixa", fn: renderCaixa, icone: "M3 7h18v12H3zM3 11h18M16 15h2" },
+  dados: { nome: "Dados", titulo: "Dados e conferência", fn: renderDados, icone: "M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zm0 0v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" },
+  comparativo: { nome: "Comparativo", titulo: "Comparativo das empresas", fn: renderComparativo, icone: "M7 4v16M17 4v16M3 8h8M13 16h8" },
 };
 
+let app = null;
+let opcoes = {};
+let nav, filtros, titulo, subtitulo, main, gaveta, cortina, carimbo;
+let paginaAnterior = null;
 
-// Eixo "bonito": ticks redondos entre min e max
-function ticks(min, max, alvo = 4) {
-  if (min === max) { max = min + 1; }
-  const span = max - min;
-  const bruto = span / alvo;
-  const mag = 10 ** Math.floor(Math.log10(bruto));
-  const f = bruto / mag;
-  const passo = (f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10) * mag;
-  const ini = Math.floor(min / passo) * passo;
-  const fim = Math.ceil(max / passo) * passo;
-  const t = [];
-  for (let x = ini; x <= fim + passo / 2; x += passo) t.push(Math.round(x * 1e6) / 1e6);
-  return t;
+function svgIcone(d) {
+  return el("svg", { viewBox: "0 0 24 24", width: 20, height: 20, "aria-hidden": "true", fill: "none", stroke: "currentColor", "stroke-width": 1.8, "stroke-linecap": "round", "stroke-linejoin": "round" }, el("path", { d }));
 }
 
-// ───────── desenho responsivo ─────────
-function responsivo(container, desenhar) {
-  // um único observador por contêiner; chamar de novo troca a função de desenho e redesenha
-  container.__desenhar = desenhar;
-  container.__ultima = -1;
-  const run = () => {
-    const w = Math.floor(container.clientWidth);
-    if (w < 40 || w === container.__ultima) return;
-    container.__ultima = w;
-    limpar(container);
-    container.append(container.__desenhar(w));
-  };
-  if (!container.__ro) { container.__ro = new ResizeObserver(() => run()); container.__ro.observe(container); }
-  run();
-  return container;
+function montarCasca() {
+  limpar(app);
+  nav = el("nav", { class: "menu", "aria-label": "Telas do painel" });
+  const marca = el("div", { class: "marca-app" }, el("span", { class: "marca-sel" }, "A"), el("div", {}, el("strong", { text: "Painel Empresa Modelo" }), el("small", { text: "ACESF · BPO financeiro" })));
+  filtros = el("div", { class: "filtros", role: "group", "aria-label": "Filtros" });
+  titulo = el("h1", { id: "titulo" });
+  subtitulo = el("p", { class: "sub" });
+  carimbo = el("p", { class: "carimbo dim" });
+  main = el("main", { id: "conteudo", tabindex: -1 });
+  cortina = el("div", { class: "cortina", onClick: () => ir({ d: null }) });
+  gaveta = el("aside", { class: "gaveta", "aria-labelledby": "dw-titulo", "aria-hidden": "true" });
+  app.append(
+    el("div", { class: "casca embutida" },
+      el("header", { class: "lateral" }, marca, nav, carimbo),
+      el("div", { class: "centro" },
+        el("div", { class: "barra" }, el("div", { class: "barra-t" }, titulo, subtitulo), filtros),
+        main)),
+    cortina, gaveta);
 }
 
-// ───────── tooltip único ─────────
-let tip;
-function garantirTip() {
-  if (!tip) {
-    tip = el("div", { class: "tip", role: "tooltip", "aria-hidden": "true" });
-    document.body.append(tip);
+function select(rotulo, valor, opcoes, aoMudar) {
+  const s = el("select", { "aria-label": rotulo, onChange: () => aoMudar(s.value) });
+  for (const [v, t] of opcoes) s.append(el("option", { value: v, text: t, selected: String(v) === String(valor) }));
+  return el("label", { class: "campo" }, el("span", { text: rotulo }), s);
+}
+
+function desenharFiltros() {
+  limpar(filtros);
+  const seg = el("div", { class: "seg", role: "radiogroup", "aria-label": "Empresa" });
+  for (const id of ["grupo", "prontomed", "multidisciplinar"]) {
+    seg.append(el("button", { type: "button", role: "radio", "aria-checked": String(S.emp === id), class: S.emp === id ? "on" : "", style: { "--c": `var(--emp-${id})` }, onClick: () => ir({ emp: id, page: S.page === "comparativo" && id !== "grupo" ? "resumo" : S.page, d: null }) }, el("i"), EMP[id].curto));
   }
-  return tip;
-}
-function mostrarTip(ev, linhas, titulo) {
-  const t = garantirTip();
-  limpar(t);
-  if (titulo) t.append(el("div", { class: "tip-t", text: titulo }));
-  for (const l of linhas) {
-    t.append(el("div", { class: "tip-l" },
-      l.cor ? el("span", { class: "tip-k", style: { background: l.cor } }) : null,
-      el("span", { class: "tip-v", text: l.valor }),
-      el("span", { class: "tip-n", text: l.nome ?? "" })));
-  }
-  t.style.opacity = "1";
-  const x = ev.clientX ?? 0, y = ev.clientY ?? 0;
-  const w = t.offsetWidth, h = t.offsetHeight;
-  let left = x + 14, top = y - h - 12;
-  if (left + w > window.innerWidth - 8) left = x - w - 14;
-  if (top < 8) top = y + 18;
-  t.style.left = `${Math.max(8, left)}px`;
-  t.style.top = `${top}px`;
-}
-function esconderTip() { if (tip) tip.style.opacity = "0"; }
-
-// Liga tooltip a um elemento (mouse, toque e foco por teclado)
-function comTip(no, gerar) {
-  const mostrar = (ev) => {
-    const g = gerar(ev);
-    if (!g) return;
-    let e = ev;
-    if (ev.type === "focus") {
-      const r = no.getBoundingClientRect();
-      e = { clientX: r.left + r.width / 2, clientY: r.top };
-    }
-    mostrarTip(e, g.linhas, g.titulo);
-  };
-  no.addEventListener("pointermove", mostrar);
-  no.addEventListener("pointerenter", mostrar);
-  no.addEventListener("pointerleave", esconderTip);
-  no.addEventListener("focus", mostrar);
-  no.addEventListener("blur", esconderTip);
-  return no;
-}
-
-function baixarCSV(nome, linhas) {
-  const esc = (c) => { const s = String(c ?? ""); return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-  const csv = "﻿" + linhas.map((l) => l.map(esc).join(";")).join("\n");
-  const a = el("a", { href: URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" })), download: nome });
-  document.body.append(a); a.click(); a.remove();
-}
-
-return { el, limpar, fR, fRsig, fMilAbs, fMilSig, fN, fP, fPsig, fPP, compacto, ticks, responsivo, mostrarTip, esconderTip, comTip, baixarCSV, fInt };
-};
-__d["model.js"] = function () {
-// Modelo analítico: transforma o JSON do banco em árvores de contas, métricas, variações, ponte e alertas.
-// Convenção de sinais (igual ao banco): receita positiva; custo, despesa, investimento e financiamento negativos.
-const { v: valorConta, janela, media, soma } = __r("api.js");
-
-const EMP = {
-  prontomed: { id: "prontomed", nome: "Clínica Modelo", curto: "Modelo", cor: "var(--emp-prontomed)" },
-  multidisciplinar: { id: "multidisciplinar", nome: "Clínica Terapias", curto: "Terapias", cor: "var(--emp-multidisciplinar)" },
-  grupo: { id: "grupo", nome: "Grupo Modelo", curto: "Grupo", cor: "var(--emp-grupo)" },
-};
-const EMPRESAS_REAIS = ["prontomed", "multidisciplinar"];
-
-const MESES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
-const MESES_LONGOS = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
-const mesCurto = (m) => `${MESES[+m.slice(5, 7) - 1]}/${m.slice(2, 4)}`;
-const mesLongo = (m) => `${MESES_LONGOS[+m.slice(5, 7) - 1]} de ${m.slice(0, 4)}`;
-const mesNome = (m) => MESES_LONGOS[+m.slice(5, 7) - 1];
-const mesAbrev = (m) => MESES[+m.slice(5, 7) - 1];
-
-// ───────────────────────── árvore de contas por empresa ─────────────────────────
-const cacheArvore = new Map();
-function arvore(P, emp) {
-  if (cacheArvore.has(P) === false) cacheArvore.set(P, {});
-  const c = cacheArvore.get(P);
-  if (c[emp]) return c[emp];
-  const emps = emp === "grupo" ? EMPRESAS_REAIS : [emp];
-  const comValor = new Set();
-  for (const e of emps) for (const meses of Object.values(P.valor[e] ?? {})) for (const cod of Object.keys(meses)) comValor.add(cod);
-  const nos = new Map();
-  const mk = (cod) => {
-    const k = P.contas.get(cod);
-    return { codigo: cod, nome: k.nome, grupo: k.grupo, pai: k.pai, subtotal: k.subtotal, ordem: k.ordem, incluirDre: k.incluir_dre, naoOperacional: !!k.nao_operacional, filhos: [] };
-  };
-  for (const k of P.raw.contas) {
-    if (!k.subtotal && comValor.has(k.codigo)) {
-      let cur = k;
-      while (cur) {
-        if (!nos.has(cur.codigo)) nos.set(cur.codigo, mk(cur.codigo));
-        cur = cur.pai ? P.contas.get(cur.pai) : null;
-      }
-    }
-  }
-  for (const n of nos.values()) if (n.pai && nos.has(n.pai)) nos.get(n.pai).filhos.push(n);
-  for (const n of nos.values()) n.filhos.sort((a, b) => a.ordem - b.ordem);
-  const raizes = [...nos.values()].filter((n) => !n.pai || !nos.has(n.pai)).sort((a, b) => a.ordem - b.ordem);
-  const res = { nos, raizes };
-  c[emp] = res;
-  return res;
-}
-
-function folhas(no) {
-  return no.filhos.length ? no.filhos.flatMap(folhas) : [no];
-}
-
-// valor de um nó (folha ou subtotal) em um mês; `emp` pode ser 'grupo'
-function valorNo(P, emp, mes, no) {
-  const cod = typeof no === "string" ? no : no.codigo;
-  if (emp === "grupo") return EMPRESAS_REAIS.reduce((s, e) => s + valorNo(P, e, mes, cod), 0);
-  return valorConta(P, emp, mes, cod);
-}
-
-function fontesNo(P, emp, mes, no) {
-  const emps = emp === "grupo" ? EMPRESAS_REAIS : [emp];
-  const set = new Set();
-  for (const f of folhas(no)) for (const e of emps) { const s = P.fonte[e]?.[mes]?.[f.codigo]; if (s) set.add(s); }
-  return [...set];
-}
-
-// ───────────────────────── métricas do DRE por mês ─────────────────────────
-const CAMPOS = ["receita", "custos", "despesas_e_outras", "rendimentos_financeiros", "investimentos", "financiamentos", "margem_contribuicao", "resultado_operacional", "resultado_sem_rendimentos", "despesas_fixas", "variacao_caixa"];
-function metricas(P, emp, mes) {
-  const base = (e) => P.dre[e]?.[mes];
-  let r;
-  if (emp === "grupo") {
-    const rows = EMPRESAS_REAIS.map(base);
-    if (rows.some((x) => !x)) return null;
-    r = {};
-    for (const c of CAMPOS) r[c] = soma(rows.map((x) => Number(x[c])));
-  } else {
-    const x = base(emp);
-    if (!x) return null;
-    r = {};
-    for (const c of CAMPOS) r[c] = Number(x[c]);
-  }
-  const m = {
-    mes,
-    receita: r.receita,
-    custos: r.custos,
-    mc: r.margem_contribuicao,
-    mcPct: r.receita ? (100 * r.margem_contribuicao) / r.receita : 0,
-    despesas: r.despesas_e_outras,
-    rend: r.rendimentos_financeiros,
-    resultado: r.resultado_operacional,
-    resultadoAj: r.resultado_sem_rendimentos,
-    margemOp: r.receita ? (100 * r.resultado_operacional) / r.receita : 0,
-    margemOpAj: r.receita ? (100 * r.resultado_sem_rendimentos) / r.receita : 0,
-    invest: r.investimentos,
-    financ: r.financiamentos,
-    caixa: r.variacao_caixa,
-    fixas: r.despesas_fixas,
-  };
-  m.pe = m.mcPct > 0 ? m.fixas / (m.mcPct / 100) : null;
-  m.folga = m.pe != null && m.receita ? (100 * (m.receita - m.pe)) / m.receita : null;
-  return m;
-}
-
-// Janela de meses até `mes` (inclusive), limitada pelos meses que existem
-function mesesJanela(P, mes, n) {
-  return janela(P, mes, n);
-}
-function mesAnterior(P, mes) {
-  const i = P.meses.indexOf(mes);
-  return i > 0 ? P.meses[i - 1] : null;
-}
-function mesesBase(P, mes, modo) {
-  const i = P.meses.indexOf(mes);
-  if (modo === "avg") return P.meses.slice(Math.max(0, i - 3), i);
-  return i > 0 ? [P.meses[i - 1]] : [];
-}
-
-// ───────────────────────── variação e semântica de cor ─────────────────────────
-// "magnitude": para custos/despesas (negativos) a variação % é medida sobre o valor absoluto,
-// como nas tabelas dos prompts (custo que cresce = +%).
-function variacao(cur, base, algebrico = false) {
-  if (base == null || base === 0) return { abs: base == null ? null : cur - base, pct: null, novo: base === 0 && cur !== 0 };
-  const pct = algebrico ? ((cur - base) / Math.abs(base)) * 100 : ((Math.abs(cur) - Math.abs(base)) / Math.abs(base)) * 100;
-  return { abs: cur - base, pct, novo: false };
-}
-// Retorna 'bom' | 'ruim' | 'neutro' para uma variação.
-function julgamento(grupo, cur, base, limiar = 3) {
-  const { abs, pct } = variacao(cur, base, grupo === "receita");
-  if (abs == null) return "neutro";
-  if (pct != null && Math.abs(pct) < limiar) return "neutro";
-  if (abs === 0) return "neutro";
-  if (grupo === "investimento" || grupo === "financiamento") return "neutro";
-  // valores assinados: aumento algébrico é sempre melhor (receita sobe, custo "menos negativo")
-  return abs > 0 ? "bom" : "ruim";
-}
-function baseNo(P, emp, no, mes, modo) {
-  const ms = mesesBase(P, mes, modo);
-  if (!ms.length) return null;
-  return media(ms.map((m) => valorNo(P, emp, m, no)));
-}
-
-// ───────────────────────── ponte do resultado (cascata) ─────────────────────────
-// Degraus = nós raiz de receita/custo/despesa (incluídos no DRE). Os menores viram "Demais itens".
-function ponte(P, emp, mesA, mesB, maxPassos = 7) {
-  const mA = metricas(P, emp, mesA), mB = metricas(P, emp, mesB);
-  if (!mA || !mB) return null;
-  const { raizes } = arvore(P, emp);
-  const itens = raizes
-    .filter((n) => ["receita", "custo", "despesa"].includes(n.grupo) && n.incluirDre)
-    .map((n) => ({ id: n.codigo, nome: n.nome, grupo: n.grupo, delta: valorNo(P, emp, mesB, n) - valorNo(P, emp, mesA, n) }))
-    .filter((i) => Math.abs(i.delta) >= 0.5);
-  itens.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
-  const top = itens.slice(0, maxPassos - 1);
-  const resto = itens.slice(maxPassos - 1);
-  const somaTop = soma(top.map((i) => i.delta));
-  const demaisDelta = mB.resultado - mA.resultado - somaTop;
-  const passos = [{ tipo: "total", nome: `Resultado ${mesAbrev(mesA)}`, val: mA.resultado }];
-  // ordem estável: receitas, custos, despesas; dentro de cada grupo por tamanho
-  const ordemGrupo = { receita: 0, custo: 1, despesa: 2 };
-  top.sort((a, b) => ordemGrupo[a.grupo] - ordemGrupo[b.grupo] || Math.abs(b.delta) - Math.abs(a.delta));
-  for (const i of top) passos.push({ tipo: "delta", id: i.id, nome: i.nome, val: i.delta, grupo: i.grupo });
-  if (Math.abs(demaisDelta) >= 0.5 || resto.length) passos.push({ tipo: "delta", id: "__demais", nome: "Demais itens", val: demaisDelta, itens: resto });
-  passos.push({ tipo: "total", nome: `Resultado ${mesAbrev(mesB)}`, val: mB.resultado });
-  return { passos, variacaoTotal: mB.resultado - mA.resultado };
-}
-
-// ───────────────────────── maiores movimentos (folhas) ─────────────────────────
-function movimentos(P, emp, mes, modo) {
-  const { nos } = arvore(P, emp);
-  const out = [];
-  for (const n of nos.values()) {
-    if (n.filhos.length) continue;
-    if (!n.incluirDre || !["receita", "custo", "despesa"].includes(n.grupo)) continue;
-    const cur = valorNo(P, emp, mes, n);
-    const base = baseNo(P, emp, n, mes, modo);
-    if (base == null) continue;
-    out.push({ no: n, cur, base, delta: cur - base, ...variacao(cur, base) });
-  }
-  return out;
-}
-
-// ───────────────────────── alertas automáticos (só fatos dos números) ─────────────────────────
-function alertas(P, emp, mes) {
-  const out = [];
-  const m = metricas(P, emp, mes);
-  const ant = mesAnterior(P, mes);
-  const mp = ant ? metricas(P, emp, ant) : null;
-  if (!m) return out;
-  const fAb = new Set((emp === "grupo" ? EMPRESAS_REAIS : [emp]).flatMap((e) => Object.values(P.fonte[e]?.[mes] ?? {})));
-  if (fAb.has("nibo") && !fAb.has("planilha")) {
-    out.push({ nivel: "info", titulo: "Mês em andamento", texto: "Os alertas de variação ficam desligados até o fechamento: comparar um mês parcial com um mês completo mostraria quedas que ainda não aconteceram.", no: null });
-    return out;
-  }
-  const R = (x) => `R$ ${new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 0 }).format(Math.round(Math.abs(x)))}`;
-  const pp = (x) => `${new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(x)}`;
-
-  if (Math.abs(m.rend) > 0.2 * Math.abs(m.resultado) && Math.abs(m.rend) > 1000) {
-    out.push({ nivel: "atencao", titulo: "Resultado inclui rendimentos financeiros", texto: `${R(m.rend)} do resultado vêm de rendimentos (fora da operação). Sem eles: ${R(m.resultadoAj)} (${pp(m.margemOpAj)}% da receita).`, no: "des_rendimentos_fin" });
-  }
-  if (mp && m.mcPct - mp.mcPct <= -3) {
-    out.push({ nivel: "ruim", titulo: "Margem de contribuição em queda", texto: `Caiu ${pp(Math.abs(m.mcPct - mp.mcPct))} p.p. em relação a ${mesAbrev(ant)} (de ${pp(mp.mcPct)}% para ${pp(m.mcPct)}%).`, no: "__custos" });
-  }
-  // contas recorrentes que zeraram
-  const { nos } = arvore(P, emp);
-  const jan = mesesJanela(P, mes, 6);
-  const anteriores = jan.slice(0, -1);
-  const zeradas = [];
-  for (const n of nos.values()) {
-    if (n.filhos.length || !n.incluirDre || !["receita", "custo", "despesa"].includes(n.grupo)) continue;
-    const cur = valorNo(P, emp, mes, n);
-    const nz = anteriores.filter((x) => Math.abs(valorNo(P, emp, x, n)) > 0).length;
-    if (cur === 0 && nz >= 2) {
-      const ultimo = soma(anteriores.map((x) => Math.abs(valorNo(P, emp, x, n)))) / nz;
-      zeradas.push({ n, ultimo });
-    }
-  }
-  zeradas.sort((a, b) => b.ultimo - a.ultimo);
-  for (const z of zeradas.slice(0, 3)) {
-    out.push({ nivel: "atencao", titulo: `${z.n.nome} sem lançamento no mês`, texto: `Média anterior de ${R(z.ultimo)}. Confirmar com a gestão se foi encerrado ou lançado em outra conta.`, no: z.n.codigo });
-  }
-  // grandes variações
-  const mov = movimentos(P, emp, mes, "prev").filter((x) => x.pct != null && Math.abs(x.pct) > 30 && Math.abs(x.delta) >= 2000 && Math.abs(x.base) >= 1000);
-  mov.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
-  for (const x of mov.slice(0, 3)) {
-    const bom = julgamento(x.no.grupo, x.cur, x.base);
-    out.push({ nivel: bom === "bom" ? "info" : "ruim", titulo: `${x.no.nome}: ${x.pct > 0 ? "+" : ""}${pp(x.pct)}% vs mês anterior`, texto: `${R(x.base)} → ${R(x.cur)}. Causa a confirmar com a gestão.`, no: x.no.codigo });
-  }
-  // despesas a identificar
-  const ident = nos.get("des_a_identificar");
-  if (ident) {
-    const vi = valorNo(P, emp, mes, ident);
-    if (vi !== 0) out.push({ nivel: "atencao", titulo: "Despesas a identificar", texto: `${R(vi)} no mês (${pp((100 * Math.abs(vi)) / m.receita)}% da receita) sem classificação.`, no: "des_a_identificar" });
-  }
-  // receita não recorrente
-  const outras = nos.get("mu_rec_outras");
-  if (outras) {
-    const vo = valorNo(P, emp, mes, outras);
-    if (vo > 0.1 * m.receita) out.push({ nivel: "atencao", titulo: "Outras receitas operacionais relevantes", texto: `${R(vo)} (${pp((100 * vo) / m.receita)}% da receita). Origem a confirmar. Sem elas, resultado de ${R(m.resultado - vo)}.`, no: "mu_rec_outras" });
-  }
-  // fonte dos números
-  const fontes = new Set();
-  for (const e of emp === "grupo" ? EMPRESAS_REAIS : [emp]) for (const f of Object.values(P.fonte[e]?.[mes] ?? {})) fontes.add(f);
-  if (fontes.has("nibo") || fontes.has("manual")) out.push({ nivel: "info", titulo: "Parte dos valores vem do Nibo ou de ajuste manual", texto: "Os demais seguem a planilha do painel realizado.", no: null });
-  return out;
-}
-
-// ───────────────────────── caixa ─────────────────────────
-function saldoOficial(P, emp, ateData) {
-  const emps = emp === "grupo" ? EMPRESAS_REAIS : [emp];
-  const pts = emps.map((e) => P.raw.empresas[e].caixa.filter((c) => c.data <= ateData).at(-1) ?? null);
-  if (pts.some((p) => !p)) return null;
-  return { saldo: soma(pts.map((p) => Number(p.saldo))), aproximado: pts.some((p) => p.aproximado), data: pts.map((p) => p.data).sort().at(-1), pontos: pts };
-}
-function fimDoMes(mes) {
-  const [a, m] = mes.split("-").map(Number);
-  return new Date(Date.UTC(a, m, 0)).toISOString().slice(0, 10);
-}
-
-return { EMP, EMPRESAS_REAIS, mesCurto, mesLongo, mesNome, mesAbrev, arvore, folhas, valorNo, fontesNo, metricas, mesesJanela, mesAnterior, mesesBase, variacao, julgamento, baseNo, ponte, movimentos, alertas, saldoOficial, fimDoMes };
-};
-__d["drawer.js"] = function () {
-// Painel lateral "Destrinchar": abre qualquer conta, grupo ou indicador e mostra a composição, a série e as contas filhas.
-const { el, fN, fP, fR, fRsig, compacto, responsivo } = __r("util.js");
-const { colunas, chipDelta, sparkline, rosca, linhas } = __r("charts.js");
-const { S, ir } = __r("state.js");
-const { arvore, valorNo, metricas, variacao, julgamento, baseNo, mesCurto, mesesJanela, mesLongo, fontesNo, folhas } = __r("model.js");
-const { deltaDe, badgesFonte, bgCalor, rotuloBase } = __r("ui.js");
-const { soma, media } = __r("api.js");
-
-const PSEUDO = {
-  __receita: { nome: "Receitas operacionais", grupo: "receita" },
-  __custos: { nome: "Custos operacionais", grupo: "custo" },
-  __despesas: { nome: "Despesas operacionais e outras receitas", grupo: "despesa" },
-};
-
-function resolver(P, emp, d) {
-  const { nos, raizes } = arvore(P, emp);
-  const cods = d.split("~");
-  if (PSEUDO[cods[0]]) {
-    const p = PSEUDO[cods[0]];
-    const rs = raizes.filter((n) => n.grupo === p.grupo && n.incluirDre);
-    return { titulo: p.nome, grupo: p.grupo, nos: rs, linhas: rs, trilha: [], composto: true };
-  }
-  const lista = cods.map((c) => nos.get(c)).filter(Boolean);
-  if (!lista.length) return null;
-  const unico = lista.length === 1;
-  const n0 = lista[0];
-  const trilha = [];
-  let p = n0.pai ? nos.get(n0.pai) : null;
-  while (p) { trilha.unshift(p); p = p.pai ? nos.get(p.pai) : null; }
-  return {
-    titulo: unico ? n0.nome : lista.map((n) => n.nome).join(" + "),
-    grupo: n0.grupo,
-    nos: lista,
-    linhas: unico ? (n0.filhos.length ? n0.filhos : [n0]) : lista,
-    trilha,
-    pai: n0.pai ? nos.get(n0.pai) : null,
-    composto: !unico,
-    folha: unico && !n0.filhos.length,
-  };
-}
-
-const NOME_GRUPO = { receita: "Receita", custo: "Custo", despesa: "Despesa", investimento: "Investimento", financiamento: "Financiamento" };
-
-function renderDrawer(P) {
-  const { emp, mes, d, n } = S;
-  const r = resolver(P, emp, d);
-  const caixa = el("div", { class: "drawer-corpo" });
-  if (!r) { caixa.append(el("p", { class: "dim", text: "Esta conta não existe para a empresa selecionada." })); return caixa; }
-  const meses = mesesJanela(P, mes, Math.max(n, 4));
-  const soma$ = (m) => soma(r.nos.map((x) => valorNo(P, emp, m, x)));
-  const cur = soma$(mes);
-  const base = (() => {
-    if (S.cmp === "avg") { const i = P.meses.indexOf(mes); const ms = P.meses.slice(Math.max(0, i - 3), i); return ms.length ? media(ms.map(soma$)) : null; }
-    const i = P.meses.indexOf(mes); return i > 0 ? soma$(P.meses[i - 1]) : null;
-  })();
-  const dl = deltaDe(P, emp, r.grupo, cur, base);
-  const rec = metricas(P, emp, mes)?.receita || 0;
-
-  // cabeçalho
-  const trilha = [NOME_GRUPO[r.grupo], ...r.trilha.map((t) => t.nome)].filter(Boolean).join("  ›  ");
-  caixa.append(
-    el("div", { class: "dw-topo" },
-      el("div", {}, el("p", { class: "dw-trilha", text: trilha }), el("h2", { id: "dw-titulo", text: r.titulo })),
-      el("button", { type: "button", class: "fechar", "aria-label": "Fechar detalhamento", onClick: () => ir({ d: null }), text: "×" })),
-    el("div", { class: "dw-hero" },
-      el("span", { class: "dw-valor", text: fR(cur) }),
-      el("span", { class: "dw-sub" }, chipDelta(dl.texto, dl.julg, dl.dir), el("span", { class: "dim", text: ` em relação ao ${rotuloBase()}` }))),
-    el("dl", { class: "dw-metas" },
-      el("div", {}, el("dt", { text: "% da receita" }), el("dd", { text: rec ? fP((100 * Math.abs(cur)) / rec) : "—" })),
-      r.pai ? el("div", {}, el("dt", { text: `% de ${r.pai.nome}` }), el("dd", { text: valorNo(P, emp, mes, r.pai) ? fP((100 * cur) / valorNo(P, emp, mes, r.pai)) : "—" })) : null,
-      el("div", {}, el("dt", { text: "Acumulado na janela" }), el("dd", { text: fR(soma(meses.map(soma$))) })),
-      el("div", {}, el("dt", { text: "Origem do valor" }), el("dd", {}, badgesFonte([...new Set(r.nos.flatMap((x) => fontesNo(P, emp, mes, x)))])))),
+  const meses = [...S.P.meses].reverse().map((m) => [m, mesLongo(m).replace(/^./, (c) => c.toUpperCase())]);
+  filtros.append(
+    seg,
+    select("Mês", S.mes, meses, (v) => ir({ mes: v })),
+    select("Comparar com", S.cmp, [["prev", "Mês anterior"], ["avg", "Média dos 3 meses anteriores"]], (v) => ir({ cmp: v })),
+    select("Janela", S.n, [[3, "3 meses"], [4, "4 meses"], [6, "6 meses"], [12, "12 meses"]], (v) => ir({ n: Number(v) })),
+    el("button", { type: "button", class: "btn icone", title: "Alternar tema claro e escuro", "aria-label": "Alternar tema claro e escuro", onClick: alternarTema, text: "◐" }),
+    el("button", { type: "button", class: "btn", title: "Buscar os dados mais recentes do banco", onClick: recarregar, text: "Atualizar" }),
   );
-
-  // gráfico: série da conta, ou empilhado pelas filhas
-  const linhasMostradas = r.linhas;
-  const ord = [...linhasMostradas].sort((a, b) => Math.abs(valorNo(P, emp, mes, b)) - Math.abs(valorNo(P, emp, mes, a)));
-  const top = ord.slice(0, 5);
-  const resto = ord.slice(5);
-  const seq = ["var(--cat-1)", "var(--cat-2)", "var(--cat-3)", "var(--cat-4)", "var(--cat-5)", "var(--cat-outras)"];
-  const series = top.map((no, i) => ({ id: no.codigo, nome: no.nome, cor: seq[i], vals: meses.map((m) => Math.abs(valorNo(P, emp, m, no))) }));
-  if (resto.length) series.push({ id: "__outros", nome: `Outras (${resto.length})`, cor: seq[5], vals: meses.map((m) => Math.abs(soma(resto.map((no) => valorNo(P, emp, m, no))))) });
-  const unica = series.length === 1;
-  caixa.append(el("h3", { text: unica ? `${r.titulo} por mês` : "Composição por mês" }));
-  const cx = el("div", { class: "grafico" });
-  responsivo(cx, (w) => colunas(w, { cats: meses.map(mesCurto), series: unica ? [{ ...series[0], cor: "var(--cat-1)" }] : series, empilhado: true, h: 200, nota: `composição de ${r.titulo}` }));
-  caixa.append(cx);
-  if (!unica) caixa.append(el("div", { class: "legenda estatica" }, series.map((s) => el("span", { class: "leg-item" }, el("span", { class: "leg-k", style: { background: s.cor } }), el("span", { text: s.nome })))));
-
-  // rosca do mês e, para uma conta única, a linha de evolução
-  if (!unica) {
-    const gr = el("div", { class: "grafico" });
-    responsivo(gr, (w) => rosca(w, { itens: series.map((s) => ({ id: s.id, nome: s.nome, cor: s.cor, val: s.vals.at(-1) })), max: 6, nota: `peso de cada conta em ${r.titulo}`, centro: { titulo: "no mês", valor: fR(Math.abs(cur)).replace("R$ ", "") },
-      onClick: (it) => ir({ d: it.id }) }));
-    caixa.append(el("h3", { text: "Peso de cada conta no mês" }), gr);
-  } else {
-    const gl = el("div", { class: "grafico" });
-    const todos = mesesJanela(P, mes, 12);
-    responsivo(gl, (w) => linhas(w, { cats: todos.map(mesCurto), h: 190, nota: `${r.titulo} em 12 meses`, series: [{ id: "u", nome: r.titulo, cor: "var(--cat-1)", vals: todos.map((m) => Math.abs(soma$(m))) }] }));
-    caixa.append(el("h3", { text: "Evolução em até 12 meses" }), gl);
-  }
-
-  // tabela das linhas
-  const tabela = el("table", { class: "dre mini" });
-  tabela.append(el("thead", {}, el("tr", {}, el("th", { class: "c-nome", text: r.folha ? "Conta" : "Contas" }), ...meses.map((m) => el("th", { class: "num" + (m === mes ? " atual" : ""), text: mesCurto(m) })), el("th", { class: "num", text: "Δ %" }))));
-  const tb = el("tbody");
-  const linhasTabela = ord;
-  for (const no of linhasTabela) {
-    const f = (m) => valorNo(P, emp, m, no);
-    const curN = f(mes);
-    const baseN = baseNo(P, emp, no, mes, S.cmp);
-    const dd = deltaDe(P, emp, no.grupo, curN, baseN, { moeda: false });
-    const v = variacao(curN, baseN);
-    tb.append(el("tr", {},
-      el("td", { class: "c-nome" }, no.filhos.length || no.codigo !== r.nos[0]?.codigo ? el("button", { type: "button", class: "lnk", onClick: () => ir({ d: no.codigo }), text: no.nome }) : el("span", { text: no.nome })),
-      ...meses.map((m) => el("td", { class: "num" + (m === mes ? " atual" : ""), text: fN(f(m)) })),
-      el("td", { class: "num calor", style: { background: bgCalor(dd.julg, v.pct) }, text: v.novo ? "novo" : v.pct == null ? "—" : `${v.pct > 0 ? "+" : v.pct < 0 ? "−" : ""}${Math.abs(v.pct).toFixed(1).replace(".", ",")}%` })));
-  }
-  if (linhasTabela.length > 1) tb.append(el("tr", { class: "total" }, el("td", { class: "c-nome", text: "Total" }), ...meses.map((m) => el("td", { class: "num" + (m === mes ? " atual" : ""), text: fN(soma$(m)) })), el("td", { class: "num", text: "" })));
-  tabela.append(tb);
-  caixa.append(el("h3", { text: r.folha ? "Valores por mês" : "Contas que compõem" }), el("div", { class: "tabela-rolagem" }, tabela));
-
-  // fatos para leitura
-  const fatos = [];
-  const serieAbs = meses.map((m) => Math.abs(soma$(m)));
-  const mx = Math.max(...serieAbs), mn = Math.min(...serieAbs);
-  if (serieAbs.some((x) => x > 0)) {
-    fatos.push(`Maior valor da janela: ${mesCurto(meses[serieAbs.indexOf(mx)])} (${fR(mx)}). Menor: ${mesCurto(meses[serieAbs.indexOf(mn)])} (${fR(mn)}).`);
-    const zeros = meses.filter((m) => soma$(m) === 0);
-    if (zeros.length && zeros.length < meses.length) fatos.push(`Sem lançamento em ${zeros.map(mesCurto).join(", ")}.`);
-  }
-  if (fatos.length) caixa.append(el("h3", { text: "O que os números mostram" }), el("ul", { class: "fatos" }, fatos.map((f) => el("li", { text: f }))));
-  if (r.folha) caixa.append(el("p", { class: "nota", text: "Esta é a conta mais detalhada do painel. O detalhe por lançamento (fornecedor, data, valor) fica no Nibo; para vê-lo aqui, os lançamentos precisariam ser publicados no banco, o que ainda não foi feito." }));
-  return caixa;
 }
 
-return { renderDrawer };
+function desenharMenu() {
+  limpar(nav);
+  const itens = PAGINAS.concat(S.emp === "grupo" ? ["comparativo"] : []);
+  for (const id of itens) {
+    const t = TELAS[id];
+    nav.append(el("a", { href: paraHash({ ...S, page: id, d: null }), class: S.page === id ? "on" : "", "aria-current": S.page === id ? "page" : null }, svgIcone(t.icone), el("span", { text: t.nome })));
+  }
+}
+
+function alternarTema() {
+  const r = document.documentElement;
+  const escuro = r.dataset.tema ? r.dataset.tema === "escuro" : matchMedia("(prefers-color-scheme: dark)").matches;
+  r.dataset.tema = escuro ? "claro" : "escuro";
+  try { localStorage.setItem("painel-tema", r.dataset.tema); } catch (_) { /* sem armazenamento: ignora */ }
+  render();
+}
+
+async function recarregar() {
+  main.setAttribute("aria-busy", "true");
+  try { S.P = await carregarPainel(); render(); } catch (e) { mostrarErro(e); } finally { main.removeAttribute("aria-busy"); }
+}
+
+function aplicarHash() {
+  Object.assign(S, lerHash());
+  const P = S.P;
+  if (!EMP[S.emp]) S.emp = "grupo";
+  if (!S.mes || !P.meses.includes(S.mes)) S.mes = P.meses.includes(CONFIG.COMPETENCIA_PADRAO) ? CONFIG.COMPETENCIA_PADRAO : P.meses.at(-1);
+  if (S.page === "comparativo" && S.emp !== "grupo") S.page = "resumo";
+}
+
+function render() {
+  esconderTip();
+  const P = S.P;
+  app.dataset.empresa = S.emp;
+  const tela = TELAS[S.page];
+  titulo.textContent = tela.titulo;
+  subtitulo.textContent = `${EMP[S.emp].nome} · ${mesLongo(S.mes)}`;
+  carimbo.textContent = P.raw.gerado_em ? `Dados de ${new Date(P.raw.gerado_em).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}` : "";
+  desenharFiltros();
+  desenharMenu();
+  const y = window.scrollY;
+  limpar(main);
+  const emps = S.emp === "grupo" ? ["prontomed", "multidisciplinar"] : [S.emp];
+  const fontes = new Set(emps.flatMap((e) => Object.values(P.fonte[e]?.[S.mes] ?? {})));
+  if (fontes.has("nibo") && !fontes.has("planilha")) {
+    main.append(el("div", { class: "faixa-aviso", role: "status" }, el("strong", { text: "Mês em andamento. " }),
+      el("span", { text: "Os valores vêm do Nibo, atualizados todo dia, e ainda são parciais: lançamentos futuros e contas a receber não entram. Por isso as variações contra meses fechados não são equivalentes. Meses fechados seguem a planilha do painel realizado." })));
+  }
+  try { tela.fn(P, main); } catch (e) { console.error(e); main.append(el("p", { class: "vazio erro", text: `Não foi possível desenhar esta tela: ${e.message}` })); }
+  if (paginaAnterior !== S.page) window.scrollTo(0, 0); else window.scrollTo(0, y);
+  paginaAnterior = S.page;
+
+  const aberta = !!S.d;
+  limpar(gaveta);
+  if (aberta) {
+    try { gaveta.append(renderDrawer(P)); } catch (e) { console.error(e); gaveta.append(el("p", { class: "vazio erro", text: `Não foi possível abrir o detalhe: ${e.message}` })); }
+  }
+  gaveta.classList.toggle("aberta", aberta);
+  cortina.classList.toggle("on", aberta);
+  gaveta.setAttribute("aria-hidden", String(!aberta));
+  document.body.classList.toggle("com-gaveta", aberta);
+  if (aberta && !gaveta.dataset.foco) { gaveta.dataset.foco = "1"; gaveta.querySelector(".fechar")?.focus({ preventScroll: true }); }
+  if (!aberta) delete gaveta.dataset.foco;
+  try { opcoes.aoMudar?.({ page: S.page, emp: S.emp, mes: S.mes }); } catch (_) { /* ok */ }
+}
+
+function mostrarErro(e) {
+  limpar(app);
+  app.append(el("div", { class: "erro-geral", role: "alert" },
+    el("h1", { text: "Não consegui carregar os dados" }),
+    el("p", { text: String(e.message ?? e) }),
+    el("p", { class: "dim", text: "Confira a conexão e tente de novo. Os números só aparecem com os dados do banco; nada é inventado." }),
+    el("button", { type: "button", class: "btn primario", onClick: () => recarregar(), text: "Tentar de novo" })));
+}
+
+async function mount(host, raw, opts = {}) {
+  app = host; opcoes = opts;
+  definirDados(raw);
+  try { const t = localStorage.getItem("painel-tema"); if (t) document.documentElement.dataset.tema = t; } catch (_) { /* ok */ }
+  try { S.P = await carregarPainel(); } catch (e) { mostrarErro(e); return null; }
+  montarCasca();
+  aplicarHash();
+  render();
+  onRota(() => { aplicarHash(); render(); });
+  host.addEventListener("click", (ev) => {
+    const a = ev.target.closest && ev.target.closest('a[href^="#/"]');
+    if (a) { ev.preventDefault(); setHash(a.getAttribute("href")); }
+  });
+  window.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && S.d && host.offsetParent !== null) ir({ d: null }); });
+  return {
+    ir: (p) => ir(p),
+    redesenhar: () => render(),
+    atualizar: async (novo) => { definirDados(novo); S.P = await carregarPainel(); aplicarHash(); render(); },
+    estado: () => ({ page: S.page, emp: S.emp, mes: S.mes }),
+    carimbo: () => S.P?.raw?.gerado_em ?? null,
+    paginas: () => PAGINAS.concat(["comparativo"]),
+    TELAS,
+  };
+}
+
+return { mount };
 };
 __d["charts.js"] = function () {
 // Gráficos em SVG puro, sem dependências. Todos recebem a largura em pixels e devolvem um <svg>.
@@ -1320,185 +1025,525 @@ function rosca(w, { itens, centro, fmt = fR, onClick, max = 6, corOutras = "var(
 
 return { sparkline, colunas, linhas, cascata, barrasH, bullet, legenda, chipDelta, rosca };
 };
-__d["app.js"] = function () {
-// Casca do painel: carrega os dados, desenha filtros e menu, roteia pelas telas e abre o painel "Destrinchar".
-const { carregarPainel, definirDados } = __r("api.js");
-const { CONFIG } = __r("config.js");
-const { el, limpar, esconderTip } = __r("util.js");
-const { S, PAGINAS, lerHash, paraHash, ir, setHash, onRota } = __r("state.js");
-const { EMP, mesLongo, mesCurto } = __r("model.js");
-const { renderDrawer } = __r("drawer.js");
-const { renderResumo } = __r("views/resumo.js");
-const { renderReceitas } = __r("views/receitas.js");
-const { renderCustos } = __r("views/custos.js");
-const { renderMargem } = __r("views/margem.js");
-const { renderCaixa } = __r("views/caixa.js");
-const { renderDados } = __r("views/dados.js");
-const { renderComparativo } = __r("views/comparativo.js");
-
-const TELAS = {
-  resumo: { nome: "Resumo", titulo: "Resumo do mês", fn: renderResumo, icone: "M3 12l9-8 9 8v8a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z" },
-  receitas: { nome: "Receitas", titulo: "Receitas", fn: renderReceitas, icone: "M4 20V10m6 10V4m6 16v-7m6 7H2" },
-  custos: { nome: "Custos e despesas", titulo: "Custos e despesas", fn: renderCustos, icone: "M3 5h18M3 12h12M3 19h7" },
-  margem: { nome: "Margem e equilíbrio", titulo: "Margem e ponto de equilíbrio", fn: renderMargem, icone: "M4 19L20 5M7 8a2 2 0 1 0 0-.01M17 18a2 2 0 1 0 0-.01" },
-  caixa: { nome: "Caixa", titulo: "Caixa", fn: renderCaixa, icone: "M3 7h18v12H3zM3 11h18M16 15h2" },
-  dados: { nome: "Dados", titulo: "Dados e conferência", fn: renderDados, icone: "M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zm0 0v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" },
-  comparativo: { nome: "Comparativo", titulo: "Comparativo das empresas", fn: renderComparativo, icone: "M7 4v16M17 4v16M3 8h8M13 16h8" },
+__d["config.js"] = function () {
+// Configuração pública do painel. A chave abaixo é a chave "publishable" (anon) do Supabase:
+// ela foi feita para ficar no navegador. O acesso é limitado à função painel_publico(),
+// que só devolve dados das tabelas painel_* (somente leitura).
+const CONFIG = {
+  SUPABASE_URL: "https://uabghobxbzobvmzfyzzi.supabase.co",
+  SUPABASE_KEY: "sb_publishable_wakfEwoYb-dVz26AfdKZxw_VUbGkqNo",
+  RPC: "painel_publico",
+  // Competência exibida por padrão (YYYY-MM). Se vazio, usa o último mês com dados de receita.
+  COMPETENCIA_PADRAO: "2026-09",
+  MESES_JANELA: 4, // Jun–Set: mês atual + 3 anteriores
+  // Contas do Nibo/fórmulas usam sempre a MESMA convenção de sinais (ver docs/PROMPT_FRONT.md).
 };
 
-let app = null;
-let opcoes = {};
-let nav, filtros, titulo, subtitulo, main, gaveta, cortina, carimbo;
-let paginaAnterior = null;
+return { CONFIG };
+};
+__d["drawer.js"] = function () {
+// Painel lateral "Destrinchar": abre qualquer conta, grupo ou indicador e mostra a composição, a série e as contas filhas.
+const { el, fN, fP, fR, fRsig, compacto, responsivo } = __r("util.js");
+const { colunas, chipDelta, sparkline, rosca, linhas } = __r("charts.js");
+const { S, ir } = __r("state.js");
+const { arvore, valorNo, metricas, variacao, julgamento, baseNo, mesCurto, mesesJanela, mesLongo, fontesNo, folhas } = __r("model.js");
+const { deltaDe, badgesFonte, bgCalor, rotuloBase } = __r("ui.js");
+const { soma, media } = __r("api.js");
 
-function svgIcone(d) {
-  return el("svg", { viewBox: "0 0 24 24", width: 20, height: 20, "aria-hidden": "true", fill: "none", stroke: "currentColor", "stroke-width": 1.8, "stroke-linecap": "round", "stroke-linejoin": "round" }, el("path", { d }));
-}
+const PSEUDO = {
+  __receita: { nome: "Receitas operacionais", grupo: "receita" },
+  __custos: { nome: "Custos operacionais", grupo: "custo" },
+  __despesas: { nome: "Despesas operacionais e outras receitas", grupo: "despesa" },
+};
 
-function montarCasca() {
-  limpar(app);
-  nav = el("nav", { class: "menu", "aria-label": "Telas do painel" });
-  const marca = el("div", { class: "marca-app" }, el("span", { class: "marca-sel" }, "A"), el("div", {}, el("strong", { text: "Painel Empresa Modelo" }), el("small", { text: "ACESF · BPO financeiro" })));
-  filtros = el("div", { class: "filtros", role: "group", "aria-label": "Filtros" });
-  titulo = el("h1", { id: "titulo" });
-  subtitulo = el("p", { class: "sub" });
-  carimbo = el("p", { class: "carimbo dim" });
-  main = el("main", { id: "conteudo", tabindex: -1 });
-  cortina = el("div", { class: "cortina", onClick: () => ir({ d: null }) });
-  gaveta = el("aside", { class: "gaveta", "aria-labelledby": "dw-titulo", "aria-hidden": "true" });
-  app.append(
-    el("div", { class: "casca embutida" },
-      el("header", { class: "lateral" }, marca, nav, carimbo),
-      el("div", { class: "centro" },
-        el("div", { class: "barra" }, el("div", { class: "barra-t" }, titulo, subtitulo), filtros),
-        main)),
-    cortina, gaveta);
-}
-
-function select(rotulo, valor, opcoes, aoMudar) {
-  const s = el("select", { "aria-label": rotulo, onChange: () => aoMudar(s.value) });
-  for (const [v, t] of opcoes) s.append(el("option", { value: v, text: t, selected: String(v) === String(valor) }));
-  return el("label", { class: "campo" }, el("span", { text: rotulo }), s);
-}
-
-function desenharFiltros() {
-  limpar(filtros);
-  const seg = el("div", { class: "seg", role: "radiogroup", "aria-label": "Empresa" });
-  for (const id of ["grupo", "prontomed", "multidisciplinar"]) {
-    seg.append(el("button", { type: "button", role: "radio", "aria-checked": String(S.emp === id), class: S.emp === id ? "on" : "", style: { "--c": `var(--emp-${id})` }, onClick: () => ir({ emp: id, page: S.page === "comparativo" && id !== "grupo" ? "resumo" : S.page, d: null }) }, el("i"), EMP[id].curto));
+function resolver(P, emp, d) {
+  const { nos, raizes } = arvore(P, emp);
+  const cods = d.split("~");
+  if (PSEUDO[cods[0]]) {
+    const p = PSEUDO[cods[0]];
+    const rs = raizes.filter((n) => n.grupo === p.grupo && n.incluirDre);
+    return { titulo: p.nome, grupo: p.grupo, nos: rs, linhas: rs, trilha: [], composto: true };
   }
-  const meses = [...S.P.meses].reverse().map((m) => [m, mesLongo(m).replace(/^./, (c) => c.toUpperCase())]);
-  filtros.append(
-    seg,
-    select("Mês", S.mes, meses, (v) => ir({ mes: v })),
-    select("Comparar com", S.cmp, [["prev", "Mês anterior"], ["avg", "Média dos 3 meses anteriores"]], (v) => ir({ cmp: v })),
-    select("Janela", S.n, [[3, "3 meses"], [4, "4 meses"], [6, "6 meses"], [12, "12 meses"]], (v) => ir({ n: Number(v) })),
-    el("button", { type: "button", class: "btn icone", title: "Alternar tema claro e escuro", "aria-label": "Alternar tema claro e escuro", onClick: alternarTema, text: "◐" }),
-    el("button", { type: "button", class: "btn", title: "Buscar os dados mais recentes do banco", onClick: recarregar, text: "Atualizar" }),
-  );
-}
-
-function desenharMenu() {
-  limpar(nav);
-  const itens = PAGINAS.concat(S.emp === "grupo" ? ["comparativo"] : []);
-  for (const id of itens) {
-    const t = TELAS[id];
-    nav.append(el("a", { href: paraHash({ ...S, page: id, d: null }), class: S.page === id ? "on" : "", "aria-current": S.page === id ? "page" : null }, svgIcone(t.icone), el("span", { text: t.nome })));
-  }
-}
-
-function alternarTema() {
-  const r = document.documentElement;
-  const escuro = r.dataset.tema ? r.dataset.tema === "escuro" : matchMedia("(prefers-color-scheme: dark)").matches;
-  r.dataset.tema = escuro ? "claro" : "escuro";
-  try { localStorage.setItem("painel-tema", r.dataset.tema); } catch (_) { /* sem armazenamento: ignora */ }
-  render();
-}
-
-async function recarregar() {
-  main.setAttribute("aria-busy", "true");
-  try { S.P = await carregarPainel(); render(); } catch (e) { mostrarErro(e); } finally { main.removeAttribute("aria-busy"); }
-}
-
-function aplicarHash() {
-  Object.assign(S, lerHash());
-  const P = S.P;
-  if (!EMP[S.emp]) S.emp = "grupo";
-  if (!S.mes || !P.meses.includes(S.mes)) S.mes = P.meses.includes(CONFIG.COMPETENCIA_PADRAO) ? CONFIG.COMPETENCIA_PADRAO : P.meses.at(-1);
-  if (S.page === "comparativo" && S.emp !== "grupo") S.page = "resumo";
-}
-
-function render() {
-  esconderTip();
-  const P = S.P;
-  app.dataset.empresa = S.emp;
-  const tela = TELAS[S.page];
-  titulo.textContent = tela.titulo;
-  subtitulo.textContent = `${EMP[S.emp].nome} · ${mesLongo(S.mes)}`;
-  carimbo.textContent = P.raw.gerado_em ? `Dados de ${new Date(P.raw.gerado_em).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}` : "";
-  desenharFiltros();
-  desenharMenu();
-  const y = window.scrollY;
-  limpar(main);
-  const emps = S.emp === "grupo" ? ["prontomed", "multidisciplinar"] : [S.emp];
-  const fontes = new Set(emps.flatMap((e) => Object.values(P.fonte[e]?.[S.mes] ?? {})));
-  if (fontes.has("nibo") && !fontes.has("planilha")) {
-    main.append(el("div", { class: "faixa-aviso", role: "status" }, el("strong", { text: "Mês em andamento. " }),
-      el("span", { text: "Os valores vêm do Nibo, atualizados todo dia, e ainda são parciais: lançamentos futuros e contas a receber não entram. Por isso as variações contra meses fechados não são equivalentes. Meses fechados seguem a planilha do painel realizado." })));
-  }
-  try { tela.fn(P, main); } catch (e) { console.error(e); main.append(el("p", { class: "vazio erro", text: `Não foi possível desenhar esta tela: ${e.message}` })); }
-  if (paginaAnterior !== S.page) window.scrollTo(0, 0); else window.scrollTo(0, y);
-  paginaAnterior = S.page;
-
-  const aberta = !!S.d;
-  limpar(gaveta);
-  if (aberta) {
-    try { gaveta.append(renderDrawer(P)); } catch (e) { console.error(e); gaveta.append(el("p", { class: "vazio erro", text: `Não foi possível abrir o detalhe: ${e.message}` })); }
-  }
-  gaveta.classList.toggle("aberta", aberta);
-  cortina.classList.toggle("on", aberta);
-  gaveta.setAttribute("aria-hidden", String(!aberta));
-  document.body.classList.toggle("com-gaveta", aberta);
-  if (aberta && !gaveta.dataset.foco) { gaveta.dataset.foco = "1"; gaveta.querySelector(".fechar")?.focus({ preventScroll: true }); }
-  if (!aberta) delete gaveta.dataset.foco;
-  try { opcoes.aoMudar?.({ page: S.page, emp: S.emp, mes: S.mes }); } catch (_) { /* ok */ }
-}
-
-function mostrarErro(e) {
-  limpar(app);
-  app.append(el("div", { class: "erro-geral", role: "alert" },
-    el("h1", { text: "Não consegui carregar os dados" }),
-    el("p", { text: String(e.message ?? e) }),
-    el("p", { class: "dim", text: "Confira a conexão e tente de novo. Os números só aparecem com os dados do banco; nada é inventado." }),
-    el("button", { type: "button", class: "btn primario", onClick: () => recarregar(), text: "Tentar de novo" })));
-}
-
-async function mount(host, raw, opts = {}) {
-  app = host; opcoes = opts;
-  definirDados(raw);
-  try { const t = localStorage.getItem("painel-tema"); if (t) document.documentElement.dataset.tema = t; } catch (_) { /* ok */ }
-  try { S.P = await carregarPainel(); } catch (e) { mostrarErro(e); return null; }
-  montarCasca();
-  aplicarHash();
-  render();
-  onRota(() => { aplicarHash(); render(); });
-  host.addEventListener("click", (ev) => {
-    const a = ev.target.closest && ev.target.closest('a[href^="#/"]');
-    if (a) { ev.preventDefault(); setHash(a.getAttribute("href")); }
-  });
-  window.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && S.d && host.offsetParent !== null) ir({ d: null }); });
+  const lista = cods.map((c) => nos.get(c)).filter(Boolean);
+  if (!lista.length) return null;
+  const unico = lista.length === 1;
+  const n0 = lista[0];
+  const trilha = [];
+  let p = n0.pai ? nos.get(n0.pai) : null;
+  while (p) { trilha.unshift(p); p = p.pai ? nos.get(p.pai) : null; }
   return {
-    ir: (p) => ir(p),
-    redesenhar: () => render(),
-    atualizar: async (novo) => { definirDados(novo); S.P = await carregarPainel(); aplicarHash(); render(); },
-    estado: () => ({ page: S.page, emp: S.emp, mes: S.mes }),
-    carimbo: () => S.P?.raw?.gerado_em ?? null,
-    paginas: () => PAGINAS.concat(["comparativo"]),
-    TELAS,
+    titulo: unico ? n0.nome : lista.map((n) => n.nome).join(" + "),
+    grupo: n0.grupo,
+    nos: lista,
+    linhas: unico ? (n0.filhos.length ? n0.filhos : [n0]) : lista,
+    trilha,
+    pai: n0.pai ? nos.get(n0.pai) : null,
+    composto: !unico,
+    folha: unico && !n0.filhos.length,
   };
 }
 
-return { mount };
+const NOME_GRUPO = { receita: "Receita", custo: "Custo", despesa: "Despesa", investimento: "Investimento", financiamento: "Financiamento" };
+
+function renderDrawer(P) {
+  const { emp, mes, d, n } = S;
+  const r = resolver(P, emp, d);
+  const caixa = el("div", { class: "drawer-corpo" });
+  if (!r) { caixa.append(el("p", { class: "dim", text: "Esta conta não existe para a empresa selecionada." })); return caixa; }
+  const meses = mesesJanela(P, mes, Math.max(n, 4));
+  const soma$ = (m) => soma(r.nos.map((x) => valorNo(P, emp, m, x)));
+  const cur = soma$(mes);
+  const base = (() => {
+    if (S.cmp === "avg") { const i = P.meses.indexOf(mes); const ms = P.meses.slice(Math.max(0, i - 3), i); return ms.length ? media(ms.map(soma$)) : null; }
+    const i = P.meses.indexOf(mes); return i > 0 ? soma$(P.meses[i - 1]) : null;
+  })();
+  const dl = deltaDe(P, emp, r.grupo, cur, base);
+  const rec = metricas(P, emp, mes)?.receita || 0;
+
+  // cabeçalho
+  const trilha = [NOME_GRUPO[r.grupo], ...r.trilha.map((t) => t.nome)].filter(Boolean).join("  ›  ");
+  caixa.append(
+    el("div", { class: "dw-topo" },
+      el("div", {}, el("p", { class: "dw-trilha", text: trilha }), el("h2", { id: "dw-titulo", text: r.titulo })),
+      el("button", { type: "button", class: "fechar", "aria-label": "Fechar detalhamento", onClick: () => ir({ d: null }), text: "×" })),
+    el("div", { class: "dw-hero" },
+      el("span", { class: "dw-valor", text: fR(cur) }),
+      el("span", { class: "dw-sub" }, chipDelta(dl.texto, dl.julg, dl.dir), el("span", { class: "dim", text: ` em relação ao ${rotuloBase()}` }))),
+    el("dl", { class: "dw-metas" },
+      el("div", {}, el("dt", { text: "% da receita" }), el("dd", { text: rec ? fP((100 * Math.abs(cur)) / rec) : "—" })),
+      r.pai ? el("div", {}, el("dt", { text: `% de ${r.pai.nome}` }), el("dd", { text: valorNo(P, emp, mes, r.pai) ? fP((100 * cur) / valorNo(P, emp, mes, r.pai)) : "—" })) : null,
+      el("div", {}, el("dt", { text: "Acumulado na janela" }), el("dd", { text: fR(soma(meses.map(soma$))) })),
+      el("div", {}, el("dt", { text: "Origem do valor" }), el("dd", {}, badgesFonte([...new Set(r.nos.flatMap((x) => fontesNo(P, emp, mes, x)))])))),
+  );
+
+  // gráfico: série da conta, ou empilhado pelas filhas
+  const linhasMostradas = r.linhas;
+  const ord = [...linhasMostradas].sort((a, b) => Math.abs(valorNo(P, emp, mes, b)) - Math.abs(valorNo(P, emp, mes, a)));
+  const top = ord.slice(0, 5);
+  const resto = ord.slice(5);
+  const seq = ["var(--cat-1)", "var(--cat-2)", "var(--cat-3)", "var(--cat-4)", "var(--cat-5)", "var(--cat-outras)"];
+  const series = top.map((no, i) => ({ id: no.codigo, nome: no.nome, cor: seq[i], vals: meses.map((m) => Math.abs(valorNo(P, emp, m, no))) }));
+  if (resto.length) series.push({ id: "__outros", nome: `Outras (${resto.length})`, cor: seq[5], vals: meses.map((m) => Math.abs(soma(resto.map((no) => valorNo(P, emp, m, no))))) });
+  const unica = series.length === 1;
+  caixa.append(el("h3", { text: unica ? `${r.titulo} por mês` : "Composição por mês" }));
+  const cx = el("div", { class: "grafico" });
+  responsivo(cx, (w) => colunas(w, { cats: meses.map(mesCurto), series: unica ? [{ ...series[0], cor: "var(--cat-1)" }] : series, empilhado: true, h: 200, nota: `composição de ${r.titulo}` }));
+  caixa.append(cx);
+  if (!unica) caixa.append(el("div", { class: "legenda estatica" }, series.map((s) => el("span", { class: "leg-item" }, el("span", { class: "leg-k", style: { background: s.cor } }), el("span", { text: s.nome })))));
+
+  // rosca do mês e, para uma conta única, a linha de evolução
+  if (!unica) {
+    const gr = el("div", { class: "grafico" });
+    responsivo(gr, (w) => rosca(w, { itens: series.map((s) => ({ id: s.id, nome: s.nome, cor: s.cor, val: s.vals.at(-1) })), max: 6, nota: `peso de cada conta em ${r.titulo}`, centro: { titulo: "no mês", valor: fR(Math.abs(cur)).replace("R$ ", "") },
+      onClick: (it) => ir({ d: it.id }) }));
+    caixa.append(el("h3", { text: "Peso de cada conta no mês" }), gr);
+  } else {
+    const gl = el("div", { class: "grafico" });
+    const todos = mesesJanela(P, mes, 12);
+    responsivo(gl, (w) => linhas(w, { cats: todos.map(mesCurto), h: 190, nota: `${r.titulo} em 12 meses`, series: [{ id: "u", nome: r.titulo, cor: "var(--cat-1)", vals: todos.map((m) => Math.abs(soma$(m))) }] }));
+    caixa.append(el("h3", { text: "Evolução em até 12 meses" }), gl);
+  }
+
+  // tabela das linhas
+  const tabela = el("table", { class: "dre mini" });
+  tabela.append(el("thead", {}, el("tr", {}, el("th", { class: "c-nome", text: r.folha ? "Conta" : "Contas" }), ...meses.map((m) => el("th", { class: "num" + (m === mes ? " atual" : ""), text: mesCurto(m) })), el("th", { class: "num", text: "Δ %" }))));
+  const tb = el("tbody");
+  const linhasTabela = ord;
+  for (const no of linhasTabela) {
+    const f = (m) => valorNo(P, emp, m, no);
+    const curN = f(mes);
+    const baseN = baseNo(P, emp, no, mes, S.cmp);
+    const dd = deltaDe(P, emp, no.grupo, curN, baseN, { moeda: false });
+    const v = variacao(curN, baseN);
+    tb.append(el("tr", {},
+      el("td", { class: "c-nome" }, no.filhos.length || no.codigo !== r.nos[0]?.codigo ? el("button", { type: "button", class: "lnk", onClick: () => ir({ d: no.codigo }), text: no.nome }) : el("span", { text: no.nome })),
+      ...meses.map((m) => el("td", { class: "num" + (m === mes ? " atual" : ""), text: fN(f(m)) })),
+      el("td", { class: "num calor", style: { background: bgCalor(dd.julg, v.pct) }, text: v.novo ? "novo" : v.pct == null ? "—" : `${v.pct > 0 ? "+" : v.pct < 0 ? "−" : ""}${Math.abs(v.pct).toFixed(1).replace(".", ",")}%` })));
+  }
+  if (linhasTabela.length > 1) tb.append(el("tr", { class: "total" }, el("td", { class: "c-nome", text: "Total" }), ...meses.map((m) => el("td", { class: "num" + (m === mes ? " atual" : ""), text: fN(soma$(m)) })), el("td", { class: "num", text: "" })));
+  tabela.append(tb);
+  caixa.append(el("h3", { text: r.folha ? "Valores por mês" : "Contas que compõem" }), el("div", { class: "tabela-rolagem" }, tabela));
+
+  // fatos para leitura
+  const fatos = [];
+  const serieAbs = meses.map((m) => Math.abs(soma$(m)));
+  const mx = Math.max(...serieAbs), mn = Math.min(...serieAbs);
+  if (serieAbs.some((x) => x > 0)) {
+    fatos.push(`Maior valor da janela: ${mesCurto(meses[serieAbs.indexOf(mx)])} (${fR(mx)}). Menor: ${mesCurto(meses[serieAbs.indexOf(mn)])} (${fR(mn)}).`);
+    const zeros = meses.filter((m) => soma$(m) === 0);
+    if (zeros.length && zeros.length < meses.length) fatos.push(`Sem lançamento em ${zeros.map(mesCurto).join(", ")}.`);
+  }
+  if (fatos.length) caixa.append(el("h3", { text: "O que os números mostram" }), el("ul", { class: "fatos" }, fatos.map((f) => el("li", { text: f }))));
+  if (r.folha) caixa.append(el("p", { class: "nota", text: "Esta é a conta mais detalhada do painel. O detalhe por lançamento (fornecedor, data, valor) fica no Nibo; para vê-lo aqui, os lançamentos precisariam ser publicados no banco, o que ainda não foi feito." }));
+  return caixa;
+}
+
+return { renderDrawer };
+};
+__d["linhas-negocio.js"] = function () {
+// Agrupamentos de contas que formam as "linhas de negócio" de cada empresa (cores fixas em todo o painel).
+const { arvore, valorNo, metricas, EMPRESAS_REAIS } = __r("model.js");
+
+function linhasReceita(emp) {
+  if (emp === "prontomed")
+    return [
+      { id: "rec_lab", nome: "Laboratório", cor: "var(--lin-lab)", nos: ["rec_lab"] },
+      { id: "rec_cons", nome: "Consultas médicas e multiprofissionais", cor: "var(--lin-cons)", nos: ["rec_cons"] },
+      { id: "rec_img", nome: "Imagem", cor: "var(--lin-img)", nos: ["rec_img"] },
+      { id: "rec_cardio", nome: "Cardiologia", cor: "var(--lin-cardio)", nos: ["rec_cardio"] },
+      { id: "rec_outras_pm", nome: "Procedimentos e acessórias", cor: "var(--lin-acess)", nos: ["rec_procedimentos", "rec_acessorias", "rec_descontos_concedidos", "rec_residual"] },
+    ];
+  if (emp === "multidisciplinar")
+    return [
+      { id: "mu_rec_conv", nome: "Convênios", cor: "var(--mu-conv)", nos: ["mu_rec_conv"] },
+      { id: "mu_rec_multi", nome: "Multiprofissionais particulares", cor: "var(--mu-multi)", nos: ["mu_rec_multi"] },
+      { id: "mu_rec_part", nome: "Consultas particulares e pacotes", cor: "var(--mu-atend-part)", nos: ["mu_rec_part", "mu_rec_pacotes"] },
+      { id: "mu_rec_outras", nome: "Outras receitas operacionais", cor: "var(--mu-outras)", nos: ["mu_rec_outras", "mu_rec_residual"] },
+    ];
+  return EMPRESAS_REAIS.map((e) => ({ id: e, nome: e === "prontomed" ? "Modelo" : "Terapias", cor: `var(--emp-${e})`, nos: [] }));
+}
+
+function valorLinha(P, emp, mes, linha) {
+  if (emp === "grupo") return metricas(P, linha.id, mes)?.receita ?? 0;
+  return linha.nos.reduce((s, c) => s + valorNo(P, emp, mes, c), 0);
+}
+
+// raízes de custo ou despesa com cor da rampa sequencial (maior = mais escuro), estáveis por tamanho no mês de referência
+function raizesPorGrupo(P, emp, grupo, mesRef) {
+  const { raizes } = arvore(P, emp);
+  const lista = raizes.filter((n) => n.grupo === grupo && n.incluirDre);
+  // cor fixa por conta (ordem do plano), para não "repintar" quando o ranking muda de mês
+  const cats = ["var(--cat-1)", "var(--cat-2)", "var(--cat-3)", "var(--cat-4)", "var(--cat-5)", "var(--cat-6)"];
+  const porOrdem = [...lista].sort((a, b) => a.ordem - b.ordem);
+  const cor = new Map(porOrdem.map((n, i) => [n.codigo, i < cats.length ? cats[i] : "var(--cat-outras)"]));
+  const ord = [...lista].sort((a, b) => Math.abs(valorNo(P, emp, mesRef, b)) - Math.abs(valorNo(P, emp, mesRef, a)));
+  return ord.map((n) => ({ id: n.codigo, nome: n.nome, no: n, cor: cor.get(n.codigo) }));
+}
+
+const ESPECIALIDADES = [
+  { id: "mu_cus_rep_psico", nome: "Psicologia", cor: "var(--esp-psico)" },
+  { id: "mu_cus_rep_psicoped", nome: "Psicopedagogia", cor: "var(--esp-psicoped)" },
+  { id: "mu_cus_rep_to", nome: "Terapia ocupacional", cor: "var(--esp-to)" },
+  { id: "mu_cus_rep_fisio", nome: "Fisioterapia", cor: "var(--esp-fisio)" },
+  { id: "mu_cus_rep_fono", nome: "Fonoaudiologia", cor: "var(--esp-fono)" },
+  { id: "mu_cus_rep_nutri", nome: "Nutrição", cor: "var(--esp-nutri)" },
+  { id: "mu_cus_rep_outros", nome: "Outros profissionais", cor: "var(--esp-outros)" },
+];
+
+return { linhasReceita, valorLinha, raizesPorGrupo, ESPECIALIDADES };
+};
+__d["model.js"] = function () {
+// Modelo analítico: transforma o JSON do banco em árvores de contas, métricas, variações, ponte e alertas.
+// Convenção de sinais (igual ao banco): receita positiva; custo, despesa, investimento e financiamento negativos.
+const { v: valorConta, janela, media, soma } = __r("api.js");
+
+const EMP = {
+  prontomed: { id: "prontomed", nome: "Clínica Modelo", curto: "Modelo", cor: "var(--emp-prontomed)" },
+  multidisciplinar: { id: "multidisciplinar", nome: "Clínica Terapias", curto: "Terapias", cor: "var(--emp-multidisciplinar)" },
+  grupo: { id: "grupo", nome: "Grupo Modelo", curto: "Grupo", cor: "var(--emp-grupo)" },
+};
+const EMPRESAS_REAIS = ["prontomed", "multidisciplinar"];
+
+const MESES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+const MESES_LONGOS = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+const mesCurto = (m) => `${MESES[+m.slice(5, 7) - 1]}/${m.slice(2, 4)}`;
+const mesLongo = (m) => `${MESES_LONGOS[+m.slice(5, 7) - 1]} de ${m.slice(0, 4)}`;
+const mesNome = (m) => MESES_LONGOS[+m.slice(5, 7) - 1];
+const mesAbrev = (m) => MESES[+m.slice(5, 7) - 1];
+
+// ───────────────────────── árvore de contas por empresa ─────────────────────────
+const cacheArvore = new Map();
+function arvore(P, emp) {
+  if (cacheArvore.has(P) === false) cacheArvore.set(P, {});
+  const c = cacheArvore.get(P);
+  if (c[emp]) return c[emp];
+  const emps = emp === "grupo" ? EMPRESAS_REAIS : [emp];
+  const comValor = new Set();
+  for (const e of emps) for (const meses of Object.values(P.valor[e] ?? {})) for (const cod of Object.keys(meses)) comValor.add(cod);
+  const nos = new Map();
+  const mk = (cod) => {
+    const k = P.contas.get(cod);
+    return { codigo: cod, nome: k.nome, grupo: k.grupo, pai: k.pai, subtotal: k.subtotal, ordem: k.ordem, incluirDre: k.incluir_dre, naoOperacional: !!k.nao_operacional, filhos: [] };
+  };
+  for (const k of P.raw.contas) {
+    if (!k.subtotal && comValor.has(k.codigo)) {
+      let cur = k;
+      while (cur) {
+        if (!nos.has(cur.codigo)) nos.set(cur.codigo, mk(cur.codigo));
+        cur = cur.pai ? P.contas.get(cur.pai) : null;
+      }
+    }
+  }
+  for (const n of nos.values()) if (n.pai && nos.has(n.pai)) nos.get(n.pai).filhos.push(n);
+  for (const n of nos.values()) n.filhos.sort((a, b) => a.ordem - b.ordem);
+  const raizes = [...nos.values()].filter((n) => !n.pai || !nos.has(n.pai)).sort((a, b) => a.ordem - b.ordem);
+  const res = { nos, raizes };
+  c[emp] = res;
+  return res;
+}
+
+function folhas(no) {
+  return no.filhos.length ? no.filhos.flatMap(folhas) : [no];
+}
+
+// valor de um nó (folha ou subtotal) em um mês; `emp` pode ser 'grupo'
+function valorNo(P, emp, mes, no) {
+  const cod = typeof no === "string" ? no : no.codigo;
+  if (emp === "grupo") return EMPRESAS_REAIS.reduce((s, e) => s + valorNo(P, e, mes, cod), 0);
+  return valorConta(P, emp, mes, cod);
+}
+
+function fontesNo(P, emp, mes, no) {
+  const emps = emp === "grupo" ? EMPRESAS_REAIS : [emp];
+  const set = new Set();
+  for (const f of folhas(no)) for (const e of emps) { const s = P.fonte[e]?.[mes]?.[f.codigo]; if (s) set.add(s); }
+  return [...set];
+}
+
+// ───────────────────────── métricas do DRE por mês ─────────────────────────
+const CAMPOS = ["receita", "custos", "despesas_e_outras", "rendimentos_financeiros", "investimentos", "financiamentos", "margem_contribuicao", "resultado_operacional", "resultado_sem_rendimentos", "despesas_fixas", "variacao_caixa"];
+function metricas(P, emp, mes) {
+  const base = (e) => P.dre[e]?.[mes];
+  let r;
+  if (emp === "grupo") {
+    const rows = EMPRESAS_REAIS.map(base);
+    if (rows.some((x) => !x)) return null;
+    r = {};
+    for (const c of CAMPOS) r[c] = soma(rows.map((x) => Number(x[c])));
+  } else {
+    const x = base(emp);
+    if (!x) return null;
+    r = {};
+    for (const c of CAMPOS) r[c] = Number(x[c]);
+  }
+  const m = {
+    mes,
+    receita: r.receita,
+    custos: r.custos,
+    mc: r.margem_contribuicao,
+    mcPct: r.receita ? (100 * r.margem_contribuicao) / r.receita : 0,
+    despesas: r.despesas_e_outras,
+    rend: r.rendimentos_financeiros,
+    resultado: r.resultado_operacional,
+    resultadoAj: r.resultado_sem_rendimentos,
+    margemOp: r.receita ? (100 * r.resultado_operacional) / r.receita : 0,
+    margemOpAj: r.receita ? (100 * r.resultado_sem_rendimentos) / r.receita : 0,
+    invest: r.investimentos,
+    financ: r.financiamentos,
+    caixa: r.variacao_caixa,
+    fixas: r.despesas_fixas,
+  };
+  m.pe = m.mcPct > 0 ? m.fixas / (m.mcPct / 100) : null;
+  m.folga = m.pe != null && m.receita ? (100 * (m.receita - m.pe)) / m.receita : null;
+  return m;
+}
+
+// Janela de meses até `mes` (inclusive), limitada pelos meses que existem
+function mesesJanela(P, mes, n) {
+  return janela(P, mes, n);
+}
+function mesAnterior(P, mes) {
+  const i = P.meses.indexOf(mes);
+  return i > 0 ? P.meses[i - 1] : null;
+}
+function mesesBase(P, mes, modo) {
+  const i = P.meses.indexOf(mes);
+  if (modo === "avg") return P.meses.slice(Math.max(0, i - 3), i);
+  return i > 0 ? [P.meses[i - 1]] : [];
+}
+
+// ───────────────────────── variação e semântica de cor ─────────────────────────
+// "magnitude": para custos/despesas (negativos) a variação % é medida sobre o valor absoluto,
+// como nas tabelas dos prompts (custo que cresce = +%).
+function variacao(cur, base, algebrico = false) {
+  if (base == null || base === 0) return { abs: base == null ? null : cur - base, pct: null, novo: base === 0 && cur !== 0 };
+  const pct = algebrico ? ((cur - base) / Math.abs(base)) * 100 : ((Math.abs(cur) - Math.abs(base)) / Math.abs(base)) * 100;
+  return { abs: cur - base, pct, novo: false };
+}
+// Retorna 'bom' | 'ruim' | 'neutro' para uma variação.
+function julgamento(grupo, cur, base, limiar = 3) {
+  const { abs, pct } = variacao(cur, base, grupo === "receita");
+  if (abs == null) return "neutro";
+  if (pct != null && Math.abs(pct) < limiar) return "neutro";
+  if (abs === 0) return "neutro";
+  if (grupo === "investimento" || grupo === "financiamento") return "neutro";
+  // valores assinados: aumento algébrico é sempre melhor (receita sobe, custo "menos negativo")
+  return abs > 0 ? "bom" : "ruim";
+}
+function baseNo(P, emp, no, mes, modo) {
+  const ms = mesesBase(P, mes, modo);
+  if (!ms.length) return null;
+  return media(ms.map((m) => valorNo(P, emp, m, no)));
+}
+
+// ───────────────────────── ponte do resultado (cascata) ─────────────────────────
+// Degraus = nós raiz de receita/custo/despesa (incluídos no DRE). Os menores viram "Demais itens".
+function ponte(P, emp, mesA, mesB, maxPassos = 7) {
+  const mA = metricas(P, emp, mesA), mB = metricas(P, emp, mesB);
+  if (!mA || !mB) return null;
+  const { raizes } = arvore(P, emp);
+  const itens = raizes
+    .filter((n) => ["receita", "custo", "despesa"].includes(n.grupo) && n.incluirDre)
+    .map((n) => ({ id: n.codigo, nome: n.nome, grupo: n.grupo, delta: valorNo(P, emp, mesB, n) - valorNo(P, emp, mesA, n) }))
+    .filter((i) => Math.abs(i.delta) >= 0.5);
+  itens.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+  const top = itens.slice(0, maxPassos - 1);
+  const resto = itens.slice(maxPassos - 1);
+  const somaTop = soma(top.map((i) => i.delta));
+  const demaisDelta = mB.resultado - mA.resultado - somaTop;
+  const passos = [{ tipo: "total", nome: `Resultado ${mesAbrev(mesA)}`, val: mA.resultado }];
+  // ordem estável: receitas, custos, despesas; dentro de cada grupo por tamanho
+  const ordemGrupo = { receita: 0, custo: 1, despesa: 2 };
+  top.sort((a, b) => ordemGrupo[a.grupo] - ordemGrupo[b.grupo] || Math.abs(b.delta) - Math.abs(a.delta));
+  for (const i of top) passos.push({ tipo: "delta", id: i.id, nome: i.nome, val: i.delta, grupo: i.grupo });
+  if (Math.abs(demaisDelta) >= 0.5 || resto.length) passos.push({ tipo: "delta", id: "__demais", nome: "Demais itens", val: demaisDelta, itens: resto });
+  passos.push({ tipo: "total", nome: `Resultado ${mesAbrev(mesB)}`, val: mB.resultado });
+  return { passos, variacaoTotal: mB.resultado - mA.resultado };
+}
+
+// ───────────────────────── maiores movimentos (folhas) ─────────────────────────
+function movimentos(P, emp, mes, modo) {
+  const { nos } = arvore(P, emp);
+  const out = [];
+  for (const n of nos.values()) {
+    if (n.filhos.length) continue;
+    if (!n.incluirDre || !["receita", "custo", "despesa"].includes(n.grupo)) continue;
+    const cur = valorNo(P, emp, mes, n);
+    const base = baseNo(P, emp, n, mes, modo);
+    if (base == null) continue;
+    out.push({ no: n, cur, base, delta: cur - base, ...variacao(cur, base) });
+  }
+  return out;
+}
+
+// ───────────────────────── alertas automáticos (só fatos dos números) ─────────────────────────
+function alertas(P, emp, mes) {
+  const out = [];
+  const m = metricas(P, emp, mes);
+  const ant = mesAnterior(P, mes);
+  const mp = ant ? metricas(P, emp, ant) : null;
+  if (!m) return out;
+  const fAb = new Set((emp === "grupo" ? EMPRESAS_REAIS : [emp]).flatMap((e) => Object.values(P.fonte[e]?.[mes] ?? {})));
+  if (fAb.has("nibo") && !fAb.has("planilha")) {
+    out.push({ nivel: "info", titulo: "Mês em andamento", texto: "Os alertas de variação ficam desligados até o fechamento: comparar um mês parcial com um mês completo mostraria quedas que ainda não aconteceram.", no: null });
+    return out;
+  }
+  const R = (x) => `R$ ${new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 0 }).format(Math.round(Math.abs(x)))}`;
+  const pp = (x) => `${new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(x)}`;
+
+  if (Math.abs(m.rend) > 0.2 * Math.abs(m.resultado) && Math.abs(m.rend) > 1000) {
+    out.push({ nivel: "atencao", titulo: "Resultado inclui rendimentos financeiros", texto: `${R(m.rend)} do resultado vêm de rendimentos (fora da operação). Sem eles: ${R(m.resultadoAj)} (${pp(m.margemOpAj)}% da receita).`, no: "des_rendimentos_fin" });
+  }
+  if (mp && m.mcPct - mp.mcPct <= -3) {
+    out.push({ nivel: "ruim", titulo: "Margem de contribuição em queda", texto: `Caiu ${pp(Math.abs(m.mcPct - mp.mcPct))} p.p. em relação a ${mesAbrev(ant)} (de ${pp(mp.mcPct)}% para ${pp(m.mcPct)}%).`, no: "__custos" });
+  }
+  // contas recorrentes que zeraram
+  const { nos } = arvore(P, emp);
+  const jan = mesesJanela(P, mes, 6);
+  const anteriores = jan.slice(0, -1);
+  const zeradas = [];
+  for (const n of nos.values()) {
+    if (n.filhos.length || !n.incluirDre || !["receita", "custo", "despesa"].includes(n.grupo)) continue;
+    const cur = valorNo(P, emp, mes, n);
+    const nz = anteriores.filter((x) => Math.abs(valorNo(P, emp, x, n)) > 0).length;
+    if (cur === 0 && nz >= 2) {
+      const ultimo = soma(anteriores.map((x) => Math.abs(valorNo(P, emp, x, n)))) / nz;
+      zeradas.push({ n, ultimo });
+    }
+  }
+  zeradas.sort((a, b) => b.ultimo - a.ultimo);
+  for (const z of zeradas.slice(0, 3)) {
+    out.push({ nivel: "atencao", titulo: `${z.n.nome} sem lançamento no mês`, texto: `Média anterior de ${R(z.ultimo)}. Confirmar com a gestão se foi encerrado ou lançado em outra conta.`, no: z.n.codigo });
+  }
+  // grandes variações
+  const mov = movimentos(P, emp, mes, "prev").filter((x) => x.pct != null && Math.abs(x.pct) > 30 && Math.abs(x.delta) >= 2000 && Math.abs(x.base) >= 1000);
+  mov.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+  for (const x of mov.slice(0, 3)) {
+    const bom = julgamento(x.no.grupo, x.cur, x.base);
+    out.push({ nivel: bom === "bom" ? "info" : "ruim", titulo: `${x.no.nome}: ${x.pct > 0 ? "+" : ""}${pp(x.pct)}% vs mês anterior`, texto: `${R(x.base)} → ${R(x.cur)}. Causa a confirmar com a gestão.`, no: x.no.codigo });
+  }
+  // despesas a identificar
+  const ident = nos.get("des_a_identificar");
+  if (ident) {
+    const vi = valorNo(P, emp, mes, ident);
+    if (vi !== 0) out.push({ nivel: "atencao", titulo: "Despesas a identificar", texto: `${R(vi)} no mês (${pp((100 * Math.abs(vi)) / m.receita)}% da receita) sem classificação.`, no: "des_a_identificar" });
+  }
+  // receita não recorrente
+  const outras = nos.get("mu_rec_outras");
+  if (outras) {
+    const vo = valorNo(P, emp, mes, outras);
+    if (vo > 0.1 * m.receita) out.push({ nivel: "atencao", titulo: "Outras receitas operacionais relevantes", texto: `${R(vo)} (${pp((100 * vo) / m.receita)}% da receita). Origem a confirmar. Sem elas, resultado de ${R(m.resultado - vo)}.`, no: "mu_rec_outras" });
+  }
+  // fonte dos números
+  const fontes = new Set();
+  for (const e of emp === "grupo" ? EMPRESAS_REAIS : [emp]) for (const f of Object.values(P.fonte[e]?.[mes] ?? {})) fontes.add(f);
+  if (fontes.has("nibo") || fontes.has("manual")) out.push({ nivel: "info", titulo: "Parte dos valores vem do Nibo ou de ajuste manual", texto: "Os demais seguem a planilha do painel realizado.", no: null });
+  return out;
+}
+
+// ───────────────────────── caixa ─────────────────────────
+function saldoOficial(P, emp, ateData) {
+  const emps = emp === "grupo" ? EMPRESAS_REAIS : [emp];
+  const pts = emps.map((e) => P.raw.empresas[e].caixa.filter((c) => c.data <= ateData).at(-1) ?? null);
+  if (pts.some((p) => !p)) return null;
+  return { saldo: soma(pts.map((p) => Number(p.saldo))), aproximado: pts.some((p) => p.aproximado), data: pts.map((p) => p.data).sort().at(-1), pontos: pts };
+}
+function fimDoMes(mes) {
+  const [a, m] = mes.split("-").map(Number);
+  return new Date(Date.UTC(a, m, 0)).toISOString().slice(0, 10);
+}
+
+return { EMP, EMPRESAS_REAIS, mesCurto, mesLongo, mesNome, mesAbrev, arvore, folhas, valorNo, fontesNo, metricas, mesesJanela, mesAnterior, mesesBase, variacao, julgamento, baseNo, ponte, movimentos, alertas, saldoOficial, fimDoMes };
+};
+__d["referencia.js"] = function () {
+// Valores oficiais de Set/26 (prompts da reunião) usados só para a conferência na tela Dados.
+// Não alimentam nenhum gráfico: todos os números do painel vêm do banco.
+const REFERENCIA = {};
+
+return { REFERENCIA };
+};
+__d["state.js"] = function () {
+// Estado do painel, sincronizado com o hash da URL (funciona no GitHub Pages e permite compartilhar a visão exata).
+// Formato: #/pagina?e=empresa&m=AAAA-MM&c=prev|avg&n=4&d=cod1~cod2
+const PAGINAS = ["resumo", "receitas", "custos", "margem", "caixa", "dados"];
+let HASHV = "";
+const SUBS = new Set();
+function onRota(f) { SUBS.add(f); }
+function avisar() { for (const f of SUBS) f(); }
+const S = { page: "resumo", emp: "prontomed", mes: null, cmp: "prev", n: 4, d: null, P: null };
+
+function lerHash() {
+  const h = HASHV.replace(/^#\/?/, "");
+  const [rota, qs = ""] = h.split("?");
+  const q = new URLSearchParams(qs);
+  const page = PAGINAS.includes(rota) || rota === "comparativo" ? rota : "resumo";
+  const patch = { page };
+  if (q.get("e")) patch.emp = q.get("e");
+  if (q.get("m")) patch.mes = q.get("m");
+  if (q.get("c")) patch.cmp = q.get("c") === "avg" ? "avg" : "prev";
+  if (q.get("n")) patch.n = Math.max(2, Math.min(12, parseInt(q.get("n"), 10) || 4));
+  patch.d = q.get("d") || null;
+  return patch;
+}
+
+function paraHash(s = S) {
+  const q = new URLSearchParams();
+  q.set("e", s.emp);
+  if (s.mes) q.set("m", s.mes);
+  if (s.cmp !== "prev") q.set("c", s.cmp);
+  if (s.n !== 4) q.set("n", String(s.n));
+  if (s.d) q.set("d", s.d);
+  return `#/${s.page}?${q}`;
+}
+
+function ir(patch) {
+  Object.assign(S, patch);
+  HASHV = paraHash(S);
+  avisar();
+}
+function setHash(h) { HASHV = h; avisar(); }
+
+return { PAGINAS, onRota, S, lerHash, paraHash, ir, setHash };
 };
 __d["ui.js"] = function () {
 // Componentes de interface reutilizados pelas telas.
@@ -1647,188 +1692,144 @@ function blocoRosca(titulo, descricao, itens, opcoes = {}) {
 
 return { secao, area, rotuloBase, rotuloBaseCurto, deltaDe, tile, badgesFonte, bgCalor, ABERTO, tabelaArvore, chipEmpresa, janelaMeses, blocoRosca };
 };
-__d["referencia.js"] = function () {
-// Valores oficiais de Set/26 (prompts da reunião) usados só para a conferência na tela Dados.
-// Não alimentam nenhum gráfico: todos os números do painel vêm do banco.
-const REFERENCIA = {};
+__d["util.js"] = function () {
+// Utilidades de DOM, formatação e tooltip. Textos vindos de dados sempre entram via textContent.
+const { fInt } = __r("api.js");
 
-return { REFERENCIA };
-};
-__d["api.js"] = function () {
-// Camada de dados do painel (sem dependências). Busca tudo numa chamada e oferece helpers de leitura.
-const { CONFIG } = __r("config.js");
+const SVG_NS = "http://www.w3.org/2000/svg";
+const SVG_TAGS = new Set(["svg", "g", "path", "line", "rect", "circle", "text", "tspan", "title", "defs", "clipPath", "linearGradient", "stop", "polyline"]);
 
-let RAW = null;
-function definirDados(r) { RAW = r; }
-async function carregarPainel() {
-  return indexar(RAW);
-}
-
-// Cria índices: valor[empresa][competencia 'YYYY-MM'][conta] = número
-function indexar(raw) {
-  const contas = new Map(raw.contas.map((c) => [c.codigo, c]));
-  const filhos = new Map();
-  for (const c of raw.contas) if (c.pai) (filhos.get(c.pai) ?? filhos.set(c.pai, []).get(c.pai)).push(c.codigo);
-  const valor = {};
-  const fonte = {};
-  const dre = {};
-  for (const [emp, d] of Object.entries(raw.empresas)) {
-    valor[emp] = {};
-    fonte[emp] = {};
-    for (const v of d.valores) {
-      const mes = v.competencia.slice(0, 7);
-      (valor[emp][mes] ??= {})[v.conta] = Number(v.valor);
-      (fonte[emp][mes] ??= {})[v.conta] = v.fonte;
-    }
-    dre[emp] = {};
-    for (const l of d.dre) dre[emp][l.competencia.slice(0, 7)] = l; // linhas já calculadas pelo banco
+function el(tag, attrs = {}, ...filhos) {
+  const n = SVG_TAGS.has(tag) ? document.createElementNS(SVG_NS, tag) : document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs ?? {})) {
+    if (v == null || v === false) continue;
+    if (k === "class") n.setAttribute("class", v);
+    else if (k === "style" && typeof v === "object") Object.assign(n.style, v);
+    else if (k.startsWith("on") && typeof v === "function") n.addEventListener(k.slice(2).toLowerCase(), v);
+    else if (k === "text") n.textContent = v;
+    else if ((k === "fill" || k === "stroke" || k === "stop-color") && typeof v === "string" && v.startsWith("var(")) n.style.setProperty(k, v);
+    else n.setAttribute(k, v === true ? "" : v);
   }
-  const meses = [...new Set(Object.values(raw.empresas).flatMap((d) => d.dre.map((l) => l.competencia.slice(0, 7))))].sort();
-  return { raw, contas, filhos, valor, fonte, dre, meses, empresas: Object.keys(raw.empresas) };
+  for (const f of filhos.flat()) {
+    if (f == null || f === false) continue;
+    n.append(f.nodeType ? f : document.createTextNode(String(f)));
+  }
+  return n;
 }
 
-// Valor de uma conta (folha ou subtotal) em um mês. Subtotal = soma dos filhos.
-function v(P, emp, mes, codigo) {
-  const c = P.contas.get(codigo);
-  if (c?.subtotal) return (P.filhos.get(codigo) ?? []).reduce((s, f) => s + v(P, emp, mes, f), 0);
-  return P.valor[emp]?.[mes]?.[codigo] ?? 0;
-}
+const limpar = (n) => { while (n.firstChild) n.removeChild(n.firstChild); return n; };
 
-// Série dos N últimos meses terminando em `mesAtual` (inclusive).
-function janela(P, mesAtual, n = CONFIG.MESES_JANELA) {
-  const i = P.meses.indexOf(mesAtual);
-  return P.meses.slice(Math.max(0, i - n + 1), i + 1);
-}
-
-const soma = (a) => a.reduce((s, x) => s + x, 0);
-const media = (a) => (a.length ? soma(a) / a.length : 0);
-
-// Variação percentual; null quando a base é zero (mostrar "—").
-const varPct = (atual, base) => (base ? ((atual - base) / Math.abs(base)) * 100 : null);
-
-// Formatação pt-BR
-const nf0 = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 0 });
+// ───────── formatação pt-BR ─────────
 const nf1 = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-const fInt = (n) => nf0.format(Math.round(n));
-const fMil = (n) => `R$ ${nf1.format(n / 1000)} mil`; // destaques: R$ 274,5 mil
-const fPct = (n) => (n == null ? "—" : `${n > 0 ? "+" : ""}${nf1.format(n)}%`);
-const fPct1 = (n) => `${nf1.format(n)}%`;
-const fPP = (n) => `${n > 0 ? "+" : ""}${nf1.format(n)} p.p.`;
-
-return { definirDados, carregarPainel, v, janela, soma, media, varPct, fInt, fMil, fPct, fPct1, fPP };
-};
-__d["state.js"] = function () {
-// Estado do painel, sincronizado com o hash da URL (funciona no GitHub Pages e permite compartilhar a visão exata).
-// Formato: #/pagina?e=empresa&m=AAAA-MM&c=prev|avg&n=4&d=cod1~cod2
-const PAGINAS = ["resumo", "receitas", "custos", "margem", "caixa", "dados"];
-let HASHV = "";
-const SUBS = new Set();
-function onRota(f) { SUBS.add(f); }
-function avisar() { for (const f of SUBS) f(); }
-const S = { page: "resumo", emp: "prontomed", mes: null, cmp: "prev", n: 4, d: null, P: null };
-
-function lerHash() {
-  const h = HASHV.replace(/^#\/?/, "");
-  const [rota, qs = ""] = h.split("?");
-  const q = new URLSearchParams(qs);
-  const page = PAGINAS.includes(rota) || rota === "comparativo" ? rota : "resumo";
-  const patch = { page };
-  if (q.get("e")) patch.emp = q.get("e");
-  if (q.get("m")) patch.mes = q.get("m");
-  if (q.get("c")) patch.cmp = q.get("c") === "avg" ? "avg" : "prev";
-  if (q.get("n")) patch.n = Math.max(2, Math.min(12, parseInt(q.get("n"), 10) || 4));
-  patch.d = q.get("d") || null;
-  return patch;
-}
-
-function paraHash(s = S) {
-  const q = new URLSearchParams();
-  q.set("e", s.emp);
-  if (s.mes) q.set("m", s.mes);
-  if (s.cmp !== "prev") q.set("c", s.cmp);
-  if (s.n !== 4) q.set("n", String(s.n));
-  if (s.d) q.set("d", s.d);
-  return `#/${s.page}?${q}`;
-}
-
-function ir(patch) {
-  Object.assign(S, patch);
-  HASHV = paraHash(S);
-  avisar();
-}
-function setHash(h) { HASHV = h; avisar(); }
-
-return { PAGINAS, onRota, S, lerHash, paraHash, ir, setHash };
-};
-__d["linhas-negocio.js"] = function () {
-// Agrupamentos de contas que formam as "linhas de negócio" de cada empresa (cores fixas em todo o painel).
-const { arvore, valorNo, metricas, EMPRESAS_REAIS } = __r("model.js");
-
-function linhasReceita(emp) {
-  if (emp === "prontomed")
-    return [
-      { id: "rec_lab", nome: "Laboratório", cor: "var(--lin-lab)", nos: ["rec_lab"] },
-      { id: "rec_cons", nome: "Consultas médicas e multiprofissionais", cor: "var(--lin-cons)", nos: ["rec_cons"] },
-      { id: "rec_img", nome: "Imagem", cor: "var(--lin-img)", nos: ["rec_img"] },
-      { id: "rec_cardio", nome: "Cardiologia", cor: "var(--lin-cardio)", nos: ["rec_cardio"] },
-      { id: "rec_outras_pm", nome: "Procedimentos e acessórias", cor: "var(--lin-acess)", nos: ["rec_procedimentos", "rec_acessorias", "rec_descontos_concedidos", "rec_residual"] },
-    ];
-  if (emp === "multidisciplinar")
-    return [
-      { id: "mu_rec_conv", nome: "Convênios", cor: "var(--mu-conv)", nos: ["mu_rec_conv"] },
-      { id: "mu_rec_multi", nome: "Multiprofissionais particulares", cor: "var(--mu-multi)", nos: ["mu_rec_multi"] },
-      { id: "mu_rec_part", nome: "Consultas particulares e pacotes", cor: "var(--mu-atend-part)", nos: ["mu_rec_part", "mu_rec_pacotes"] },
-      { id: "mu_rec_outras", nome: "Outras receitas operacionais", cor: "var(--mu-outras)", nos: ["mu_rec_outras", "mu_rec_residual"] },
-    ];
-  return EMPRESAS_REAIS.map((e) => ({ id: e, nome: e === "prontomed" ? "Modelo" : "Terapias", cor: `var(--emp-${e})`, nos: [] }));
-}
-
-function valorLinha(P, emp, mes, linha) {
-  if (emp === "grupo") return metricas(P, linha.id, mes)?.receita ?? 0;
-  return linha.nos.reduce((s, c) => s + valorNo(P, emp, mes, c), 0);
-}
-
-// raízes de custo ou despesa com cor da rampa sequencial (maior = mais escuro), estáveis por tamanho no mês de referência
-function raizesPorGrupo(P, emp, grupo, mesRef) {
-  const { raizes } = arvore(P, emp);
-  const lista = raizes.filter((n) => n.grupo === grupo && n.incluirDre);
-  // cor fixa por conta (ordem do plano), para não "repintar" quando o ranking muda de mês
-  const cats = ["var(--cat-1)", "var(--cat-2)", "var(--cat-3)", "var(--cat-4)", "var(--cat-5)", "var(--cat-6)"];
-  const porOrdem = [...lista].sort((a, b) => a.ordem - b.ordem);
-  const cor = new Map(porOrdem.map((n, i) => [n.codigo, i < cats.length ? cats[i] : "var(--cat-outras)"]));
-  const ord = [...lista].sort((a, b) => Math.abs(valorNo(P, emp, mesRef, b)) - Math.abs(valorNo(P, emp, mesRef, a)));
-  return ord.map((n) => ({ id: n.codigo, nome: n.nome, no: n, cor: cor.get(n.codigo) }));
-}
-
-const ESPECIALIDADES = [
-  { id: "mu_cus_rep_psico", nome: "Psicologia", cor: "var(--esp-psico)" },
-  { id: "mu_cus_rep_psicoped", nome: "Psicopedagogia", cor: "var(--esp-psicoped)" },
-  { id: "mu_cus_rep_to", nome: "Terapia ocupacional", cor: "var(--esp-to)" },
-  { id: "mu_cus_rep_fisio", nome: "Fisioterapia", cor: "var(--esp-fisio)" },
-  { id: "mu_cus_rep_fono", nome: "Fonoaudiologia", cor: "var(--esp-fono)" },
-  { id: "mu_cus_rep_nutri", nome: "Nutrição", cor: "var(--esp-nutri)" },
-  { id: "mu_cus_rep_outros", nome: "Outros profissionais", cor: "var(--esp-outros)" },
-];
-
-return { linhasReceita, valorLinha, raizesPorGrupo, ESPECIALIDADES };
-};
-__d["config.js"] = function () {
-// Configuração pública do painel. A chave abaixo é a chave "publishable" (anon) do Supabase:
-// ela foi feita para ficar no navegador. O acesso é limitado à função painel_publico(),
-// que só devolve dados das tabelas painel_* (somente leitura).
-const CONFIG = {
-  SUPABASE_URL: "https://uabghobxbzobvmzfyzzi.supabase.co",
-  SUPABASE_KEY: "sb_publishable_wakfEwoYb-dVz26AfdKZxw_VUbGkqNo",
-  RPC: "painel_publico",
-  // Competência exibida por padrão (YYYY-MM). Se vazio, usa o último mês com dados de receita.
-  COMPETENCIA_PADRAO: "2026-09",
-  MESES_JANELA: 4, // Jun–Set: mês atual + 3 anteriores
-  // Contas do Nibo/fórmulas usam sempre a MESMA convenção de sinais (ver docs/PROMPT_FRONT.md).
+const nf0 = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 0 });
+const fR = (n) => `${n < 0 ? "−" : ""}R$ ${nf0.format(Math.abs(Math.round(n)))}`;
+const fRsig = (n) => (Math.round(n) === 0 ? "R$ 0" : `${n > 0 ? "+" : "−"}R$ ${nf0.format(Math.abs(Math.round(n)))}`);
+const fMilAbs = (n) => `${n < 0 ? "−" : ""}R$ ${nf1.format(Math.abs(n) / 1000)} mil`;
+const fMilSig = (n) => `${n > 0 ? "+" : n < 0 ? "−" : ""}R$ ${nf1.format(Math.abs(n) / 1000)} mil`;
+const fN = (n) => (n < 0 ? "−" : "") + nf0.format(Math.abs(Math.round(n)));
+const fP = (n) => (n == null ? "—" : `${nf1.format(n)}%`);
+const fPsig = (n) => (n == null ? "—" : Math.abs(n) > 999 ? `${n > 0 ? "+" : "−"}999%+` : `${n > 0 ? "+" : n < 0 ? "−" : ""}${nf1.format(Math.abs(n))}%`);
+const fPP = (n) => `${n > 0 ? "+" : n < 0 ? "−" : ""}${nf1.format(Math.abs(n))} p.p.`;
+const compacto = (n) => {
+  const a = Math.abs(n);
+  if (a >= 1e6) return `${nf1.format(n / 1e6)} mi`;
+  if (a >= 1e3) return `${nf0.format(n / 1e3)} mil`;
+  return nf0.format(n);
 };
 
-return { CONFIG };
+
+// Eixo "bonito": ticks redondos entre min e max
+function ticks(min, max, alvo = 4) {
+  if (min === max) { max = min + 1; }
+  const span = max - min;
+  const bruto = span / alvo;
+  const mag = 10 ** Math.floor(Math.log10(bruto));
+  const f = bruto / mag;
+  const passo = (f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10) * mag;
+  const ini = Math.floor(min / passo) * passo;
+  const fim = Math.ceil(max / passo) * passo;
+  const t = [];
+  for (let x = ini; x <= fim + passo / 2; x += passo) t.push(Math.round(x * 1e6) / 1e6);
+  return t;
+}
+
+// ───────── desenho responsivo ─────────
+function responsivo(container, desenhar) {
+  // um único observador por contêiner; chamar de novo troca a função de desenho e redesenha
+  container.__desenhar = desenhar;
+  container.__ultima = -1;
+  const run = () => {
+    const w = Math.floor(container.clientWidth);
+    if (w < 40 || w === container.__ultima) return;
+    container.__ultima = w;
+    limpar(container);
+    container.append(container.__desenhar(w));
+  };
+  if (!container.__ro) { container.__ro = new ResizeObserver(() => run()); container.__ro.observe(container); }
+  run();
+  return container;
+}
+
+// ───────── tooltip único ─────────
+let tip;
+function garantirTip() {
+  if (!tip) {
+    tip = el("div", { class: "tip", role: "tooltip", "aria-hidden": "true" });
+    document.body.append(tip);
+  }
+  return tip;
+}
+function mostrarTip(ev, linhas, titulo) {
+  const t = garantirTip();
+  limpar(t);
+  if (titulo) t.append(el("div", { class: "tip-t", text: titulo }));
+  for (const l of linhas) {
+    t.append(el("div", { class: "tip-l" },
+      l.cor ? el("span", { class: "tip-k", style: { background: l.cor } }) : null,
+      el("span", { class: "tip-v", text: l.valor }),
+      el("span", { class: "tip-n", text: l.nome ?? "" })));
+  }
+  t.style.opacity = "1";
+  const x = ev.clientX ?? 0, y = ev.clientY ?? 0;
+  const w = t.offsetWidth, h = t.offsetHeight;
+  let left = x + 14, top = y - h - 12;
+  if (left + w > window.innerWidth - 8) left = x - w - 14;
+  if (top < 8) top = y + 18;
+  t.style.left = `${Math.max(8, left)}px`;
+  t.style.top = `${top}px`;
+}
+function esconderTip() { if (tip) tip.style.opacity = "0"; }
+
+// Liga tooltip a um elemento (mouse, toque e foco por teclado)
+function comTip(no, gerar) {
+  const mostrar = (ev) => {
+    const g = gerar(ev);
+    if (!g) return;
+    let e = ev;
+    if (ev.type === "focus") {
+      const r = no.getBoundingClientRect();
+      e = { clientX: r.left + r.width / 2, clientY: r.top };
+    }
+    mostrarTip(e, g.linhas, g.titulo);
+  };
+  no.addEventListener("pointermove", mostrar);
+  no.addEventListener("pointerenter", mostrar);
+  no.addEventListener("pointerleave", esconderTip);
+  no.addEventListener("focus", mostrar);
+  no.addEventListener("blur", esconderTip);
+  return no;
+}
+
+function baixarCSV(nome, linhas) {
+  const esc = (c) => { const s = String(c ?? ""); return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  const csv = "﻿" + linhas.map((l) => l.map(esc).join(";")).join("\n");
+  const a = el("a", { href: URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" })), download: nome });
+  document.body.append(a); a.click(); a.remove();
+}
+
+return { el, limpar, fR, fRsig, fMilAbs, fMilSig, fN, fP, fPsig, fPP, compacto, ticks, responsivo, mostrarTip, esconderTip, comTip, baixarCSV, fInt };
 };
-__d["views/caixa.js"] = function () {
+__d["views\caixa.js"] = function () {
 // Caixa: o que o resultado virou em dinheiro, saldos conhecidos e um simulador de projeção (premissas editáveis).
 const { el, responsivo, fMilAbs, fMilSig, fR, fP, fN } = __r("util.js");
 const { linhas, cascata, colunas } = __r("charts.js");
@@ -1970,7 +1971,7 @@ function projecao(P, emp, mes, meses, saldo) {
 
 return { renderCaixa };
 };
-__d["views/comparativo.js"] = function () {
+__d["views\comparativo.js"] = function () {
 // Comparativo do grupo: as duas empresas lado a lado, com a contribuição de cada uma.
 const { el, responsivo, fN, fP, fMilAbs, fPP } = __r("util.js");
 const { colunas, linhas } = __r("charts.js");
@@ -2025,7 +2026,7 @@ function renderComparativo(P, raiz) {
 
 return { renderComparativo };
 };
-__d["views/custos.js"] = function () {
+__d["views\custos.js"] = function () {
 // Custos e despesas: peso sobre a receita, para onde vai o dinheiro e o que mais mexeu.
 const { el, responsivo, fMilAbs, fR, fP, fPP, fMilSig } = __r("util.js");
 const { colunas, linhas, barrasH, legenda } = __r("charts.js");
@@ -2107,7 +2108,54 @@ function renderCustos(P, raiz) {
 
 return { renderCustos };
 };
-__d["views/margem.js"] = function () {
+__d["views\dados.js"] = function () {
+// Dados: todas as contas, origem de cada número, exportação e conferência com os valores de referência.
+const { el, baixarCSV, fN, fR, fP } = __r("util.js");
+const { S, ir } = __r("state.js");
+const { metricas, mesesJanela, mesCurto, arvore, valorNo, fontesNo, EMP, EMPRESAS_REAIS } = __r("model.js");
+const { secao, tabelaArvore, badgesFonte } = __r("ui.js");
+const { REFERENCIA } = __r("referencia.js");
+
+function renderDados(P, raiz) {
+  const emp = S.emp, mes = S.mes;
+  const meses = mesesJanela(P, mes, Math.max(S.n, 4));
+
+  // origem
+  const cont = { planilha: 0, nibo: 0, manual: 0 };
+  for (const e of emp === "grupo" ? EMPRESAS_REAIS : [emp]) for (const f of Object.values(P.fonte[e]?.[mes] ?? {})) cont[f] = (cont[f] ?? 0) + 1;
+  const sync = P.raw.ultima_sincronizacao ? new Date(P.raw.ultima_sincronizacao).toLocaleString("pt-BR") : "ainda não houve";
+  raiz.append(el("div", { class: "origem" },
+    el("p", {}, el("strong", { text: "Origem dos valores em " }), el("strong", { text: mesCurto(mes) }), el("span", { text: `: ${cont.planilha} da planilha do painel, ${cont.nibo} do Nibo, ${cont.manual} ajustes manuais.` })),
+    el("p", { class: "dim", text: `Banco atualizado em ${P.raw.gerado_em ? new Date(P.raw.gerado_em).toLocaleString("pt-BR") : "—"}. Última sincronização com o Nibo: ${sync}. Prioridade quando há mais de uma fonte: manual, depois Nibo, depois planilha.` })));
+
+  // conferência com referência (apenas set/26)
+  const ref = REFERENCIA[mes]?.[emp];
+  if (ref) {
+    const m = metricas(P, emp, mes);
+    const linhas = [["Receita", m.receita, ref.receita], ["Margem de contribuição", m.mc, ref.mc], ["Resultado operacional", m.resultado, ref.resultado], ["Variação de caixa", m.caixa, ref.caixa]];
+    const t = el("table", { class: "dre mini" }, el("thead", {}, el("tr", {}, el("th", { class: "c-nome", text: "Indicador" }), el("th", { class: "num", text: "No painel" }), el("th", { class: "num", text: "Referência (prompt)" }), el("th", { class: "num", text: "Diferença" }), el("th", { class: "c-nome", text: "Situação" }))));
+    const b = el("tbody");
+    for (const [n, a, r] of linhas) { const d = a - r; const ok = Math.abs(d) <= 1.5; b.append(el("tr", {}, el("td", { class: "c-nome", text: n }), el("td", { class: "num", text: fN(a) }), el("td", { class: "num", text: fN(r) }), el("td", { class: "num", text: fN(d) }), el("td", { class: "c-nome" }, el("span", { class: `delta ${ok ? "bom" : "ruim"}`, text: ok ? "✓ confere" : "▲ divergente" })))); }
+    t.append(b);
+    raiz.append(secao("Conferência com os números oficiais", "Compara o painel com os valores dos prompts de Set/26 (tolerância de R$ 1,50 por arredondamento).", el("div", { class: "tabela-rolagem" }, t)));
+  }
+
+  // árvore completa
+  raiz.append(secao("Plano de contas completo", "Todas as contas com valor, em árvore. Clique no nome para destrinchar; a seta expande o grupo.", tabelaArvore(P, emp, { meses, mes })));
+
+  // exportar
+  const exportar = el("button", { type: "button", class: "btn primario", text: "Baixar CSV (todas as contas × meses)", onClick: () => {
+    const { nos } = arvore(P, emp);
+    const linhas = [["Conta", "Código", "Grupo", ...P.meses]];
+    for (const n of nos.values()) linhas.push([n.nome, n.codigo, n.grupo, ...P.meses.map((x) => Math.round(valorNo(P, emp, x, n) * 100) / 100)]);
+    baixarCSV(`painel-${emp}-${mes}.csv`, linhas);
+  } });
+  raiz.append(secao("Exportar", "Valores em R$ com o sinal do banco (receita positiva; custos e despesas negativos).", exportar));
+}
+
+return { renderDados };
+};
+__d["views\margem.js"] = function () {
 // Margem e ponto de equilíbrio: onde a operação ganha dinheiro, quanto falta para empatar e o que muda se algo variar.
 const { el, responsivo, fMilAbs, fMilSig, fR, fP, fPP } = __r("util.js");
 const { colunas, linhas, barrasH, bullet, legenda } = __r("charts.js");
@@ -2245,7 +2293,7 @@ function simulador(P, m) {
 
 return { renderMargem };
 };
-__d["views/receitas.js"] = function () {
+__d["views\receitas.js"] = function () {
 // Receitas: de onde vem, como se distribui e o que mudou, com caminho até a conta mais detalhada.
 const { el, responsivo, fMilAbs, fR, fP, fPP, compacto } = __r("util.js");
 const { colunas, linhas, barrasH, legenda } = __r("charts.js");
@@ -2326,7 +2374,7 @@ function renderReceitas(P, raiz) {
 
 return { renderReceitas };
 };
-__d["views/resumo.js"] = function () {
+__d["views\resumo.js"] = function () {
 const { el, responsivo, fMilAbs, fMilSig, fP, fPP, fRsig, fR } = __r("util.js");
 const { colunas, cascata, barrasH, legenda, chipDelta, sparkline, linhas } = __r("charts.js");
 const { S, ir } = __r("state.js");
@@ -2476,55 +2524,9 @@ function ponteGrupo(P, mes, ant) {
 
 return { renderResumo };
 };
-__d["views/dados.js"] = function () {
-// Dados: todas as contas, origem de cada número, exportação e conferência com os valores de referência.
-const { el, baixarCSV, fN, fR, fP } = __r("util.js");
-const { S, ir } = __r("state.js");
-const { metricas, mesesJanela, mesCurto, arvore, valorNo, fontesNo, EMP, EMPRESAS_REAIS } = __r("model.js");
-const { secao, tabelaArvore, badgesFonte } = __r("ui.js");
-const { REFERENCIA } = __r("referencia.js");
-
-function renderDados(P, raiz) {
-  const emp = S.emp, mes = S.mes;
-  const meses = mesesJanela(P, mes, Math.max(S.n, 4));
-
-  // origem
-  const cont = { planilha: 0, nibo: 0, manual: 0 };
-  for (const e of emp === "grupo" ? EMPRESAS_REAIS : [emp]) for (const f of Object.values(P.fonte[e]?.[mes] ?? {})) cont[f] = (cont[f] ?? 0) + 1;
-  const sync = P.raw.ultima_sincronizacao ? new Date(P.raw.ultima_sincronizacao).toLocaleString("pt-BR") : "ainda não houve";
-  raiz.append(el("div", { class: "origem" },
-    el("p", {}, el("strong", { text: "Origem dos valores em " }), el("strong", { text: mesCurto(mes) }), el("span", { text: `: ${cont.planilha} da planilha do painel, ${cont.nibo} do Nibo, ${cont.manual} ajustes manuais.` })),
-    el("p", { class: "dim", text: `Banco atualizado em ${P.raw.gerado_em ? new Date(P.raw.gerado_em).toLocaleString("pt-BR") : "—"}. Última sincronização com o Nibo: ${sync}. Prioridade quando há mais de uma fonte: manual, depois Nibo, depois planilha.` })));
-
-  // conferência com referência (apenas set/26)
-  const ref = REFERENCIA[mes]?.[emp];
-  if (ref) {
-    const m = metricas(P, emp, mes);
-    const linhas = [["Receita", m.receita, ref.receita], ["Margem de contribuição", m.mc, ref.mc], ["Resultado operacional", m.resultado, ref.resultado], ["Variação de caixa", m.caixa, ref.caixa]];
-    const t = el("table", { class: "dre mini" }, el("thead", {}, el("tr", {}, el("th", { class: "c-nome", text: "Indicador" }), el("th", { class: "num", text: "No painel" }), el("th", { class: "num", text: "Referência (prompt)" }), el("th", { class: "num", text: "Diferença" }), el("th", { class: "c-nome", text: "Situação" }))));
-    const b = el("tbody");
-    for (const [n, a, r] of linhas) { const d = a - r; const ok = Math.abs(d) <= 1.5; b.append(el("tr", {}, el("td", { class: "c-nome", text: n }), el("td", { class: "num", text: fN(a) }), el("td", { class: "num", text: fN(r) }), el("td", { class: "num", text: fN(d) }), el("td", { class: "c-nome" }, el("span", { class: `delta ${ok ? "bom" : "ruim"}`, text: ok ? "✓ confere" : "▲ divergente" })))); }
-    t.append(b);
-    raiz.append(secao("Conferência com os números oficiais", "Compara o painel com os valores dos prompts de Set/26 (tolerância de R$ 1,50 por arredondamento).", el("div", { class: "tabela-rolagem" }, t)));
-  }
-
-  // árvore completa
-  raiz.append(secao("Plano de contas completo", "Todas as contas com valor, em árvore. Clique no nome para destrinchar; a seta expande o grupo.", tabelaArvore(P, emp, { meses, mes })));
-
-  // exportar
-  const exportar = el("button", { type: "button", class: "btn primario", text: "Baixar CSV (todas as contas × meses)", onClick: () => {
-    const { nos } = arvore(P, emp);
-    const linhas = [["Conta", "Código", "Grupo", ...P.meses]];
-    for (const n of nos.values()) linhas.push([n.nome, n.codigo, n.grupo, ...P.meses.map((x) => Math.round(valorNo(P, emp, x, n) * 100) / 100)]);
-    baixarCSV(`painel-${emp}-${mes}.csv`, linhas);
-  } });
-  raiz.append(secao("Exportar", "Valores em R$ com o sinal do banco (receita positiva; custos e despesas negativos).", exportar));
-}
-
-return { renderDados };
-};
 return __r("app.js");
 })();
+
 
 
 const ACESF_API = { url: "https://uabghobxbzobvmzfyzzi.supabase.co", key: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVhYmdob2J4YnpvYnZtemZ5enppIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE1NTI0ODgsImV4cCI6MjEwNzEyODQ4OH0.0ECiRsM_C5HtMX-q4qtEb_Sq91G8ME3HdRkA6yNZ82w" };
@@ -2567,12 +2569,11 @@ async function chamarBanco(usuario, senha) {
   if (j?.erro || !j?.papel) throw new ErroLogin("credenciais");
   const dados = {};
   if (j.dados.prontomed) dados.prontomed = j.dados.prontomed;
-  if (j.dados.imunne) dados.imunne = Imunne.montarRaw(j.dados.imunne);
   return { papel: j.papel, usuario: j.usuario, dados, admin: j.papel === "admin", buscadoEm: new Date(j.gerado_em ?? Date.now()) };
 }
 async function abrir(papel, usuario, senha) {
   const s = await chamarBanco(usuario, senha);
-  if (s.papel !== papel) throw new ErroLogin("credenciais"); // senha de outra empresa não abre esta
+  if (papel && s.papel !== papel) throw new ErroLogin("credenciais"); // página de uma empresa: senha de outra não abre
   s.cred = { usuario, senha };
   return s;
 }
@@ -2586,7 +2587,7 @@ const raiz = document.getElementById("acesf");
 // ───────────────────────── login ─────────────────────────
 function telaLogin() {
   raiz.replaceChildren();
-  let escolha = MODO;
+  const escolha = MODO === "portal" ? null : MODO; // portal: o próprio usuário digitado define o painel
   const aviso = h("p", { class: "lg-erro", role: "alert", "aria-live": "assertive" });
   const usuario = h("input", { id: "lg-usuario", type: "text", autocomplete: "username", autocapitalize: "none", spellcheck: "false", required: true });
   const senha = h("input", { id: "lg-senha", type: "password", autocomplete: "current-password", required: true });
@@ -2599,13 +2600,19 @@ function telaLogin() {
     h("label", { class: "lg-campo", for: "lg-senha" }, h("span", { text: "Senha" }), h("span", { class: "lg-senha" }, senha, ver)),
     aviso, entrar);
 
-  cab.textContent = MODO === "admin" ? "Acesso do administrador" : `Acesso ${EMPRESAS[MODO].nome}`;
+  cab.textContent = MODO === "admin" ? "Acesso do administrador" : MODO === "portal" ? "Acesso ao painel" : `Acesso ${EMPRESAS[MODO].nome}`;
 
   const form = h("form", { class: "lg-form", novalidate: true, onSubmit: async (ev) => {
     ev.preventDefault();
     if (!usuario.value.trim() || !senha.value) { aviso.textContent = "Informe usuário e senha."; return; }
     entrar.disabled = true; entrar.textContent = "Abrindo…"; aviso.textContent = "";
     try {
+      // usuário de demonstração: não consulta o banco, abre a Empresa Modelo com dados fictícios
+      if (MODO === "portal" && typeof MODELO !== "undefined" && usuario.value.trim().toLowerCase() === "teste" && senha.value === "teste") {
+        senha.value = "";
+        await abrirPainel({ papel: "teste", usuario: "teste", admin: false, dados: { teste: MODELO }, buscadoEm: new Date(), cred: null, demo: true });
+        return;
+      }
       const sessao = await abrir(escolha, usuario.value, senha.value);
       senha.value = "";
       await abrirPainel(sessao);
@@ -2619,7 +2626,7 @@ function telaLogin() {
     h("section", { class: "lg-marca" },
       h("img", { class: "lg-logo", src: LOGO, alt: "ACESF Contadores Associados" }),
       h("h1", { text: "Painel financeiro" }),
-      h("p", { class: "lg-empresa", text: MODO === "admin" ? "Administrador ACESF" : EMPRESAS[MODO].completo }),
+      h("p", { class: "lg-empresa", text: MODO === "admin" ? "Administrador ACESF" : MODO === "portal" ? "ACESF Contadores Associados" : EMPRESAS[MODO].completo }),
       h("p", { class: "lg-nota", text: "Acesso restrito." })),
     h("section", { class: "lg-painel", "aria-labelledby": "lg-titulo" }, h("h2", { id: "lg-titulo", text: "Entrar" }), form)));
 }
@@ -2631,14 +2638,14 @@ const aberto = new Set();
 
 async function abrirPainel(s) {
   sessao = s;
-  const ids = s.admin ? Object.keys(EMPRESAS) : [s.papel];
+  const ids = s.admin ? Object.keys(EMPRESAS).filter((k) => k !== "teste") : [s.papel];
   raiz.replaceChildren();
   const menu = h("nav", { class: "menu", "aria-label": "Empresas e telas" });
   const carimbo = h("p", { class: "carimbo dim", "aria-live": "polite" });
   const botaoAtu = h("button", { type: "button", class: "ac-atu", text: "Atualizar agora", hidden: !!s.demo, onClick: () => atualizar(false) });
   let ultimo = s.buscadoEm, falhou = false, emAndamento = false;
   const conteudo = h("div", { class: "centro acesf-centro" });
-  const sair = h("button", { type: "button", class: "ac-sair", text: "Sair", hidden: !!s.demo, onClick: encerrar });
+  const sair = h("button", { type: "button", class: "ac-sair", text: "Sair", hidden: !!s.demo && MODO === "teste", onClick: encerrar });
   const eu = h("p", { class: "ac-eu" }, h("small", { text: s.admin ? "Administrador" : s.demo ? "Demonstração" : "Acesso" }), h("strong", { text: s.admin ? "ACESF" : EMPRESAS[s.papel].nome }));
   raiz.append(h("div", { class: "casca ac-casca" },
     h("header", { class: "lateral" }, h("div", { class: "marca-app" }, h("img", { class: "ac-logo", src: LOGO, alt: "ACESF Contadores Associados" })), menu, h("div", { class: "ac-pe" }, carimbo, botaoAtu, eu, sair)),
@@ -2660,7 +2667,11 @@ async function abrirPainel(s) {
         sub.append(h("a", { href: "#", class: on ? "on" : "", "aria-current": on ? "page" : null, style: { "--emp": e.cor }, onClick: (ev) => { ev.preventDefault(); irPara(id, p); } }, svg(t.icone), h("span", { text: t.nome })));
       }
       const cab = s.admin
-        ? h("button", { type: "button", class: "emp-btn" + (ativa === id ? " on" : ""), "aria-expanded": String(abertoAgora), "aria-controls": `sub-${id}`, style: { "--c": e.cor }, onClick: () => { if (ativa === id) { aberto.has(id) ? aberto.delete(id) : aberto.add(id); desenharMenu(); } else irPara(id, null); } },
+        ? h("button", { type: "button", class: "emp-btn" + (ativa === id ? " on" : ""), "aria-expanded": String(abertoAgora), "aria-controls": `sub-${id}`, style: { "--c": e.cor }, onClick: () => {
+            const isOpen = aberto.has(id);
+            if (ativa === id && isOpen) { aberto.delete(id); desenharMenu(); }
+            else irPara(id, null);
+          } },
             h("i"), h("span", { text: e.nome }), h("b", { class: "chev", "aria-hidden": "true", text: "▸" }))
         : h("p", { class: "emp-fixo", style: { "--c": e.cor } }, h("i"), h("span", { text: e.nome }));
       menu.append(h("div", { class: "emp-bloco" + (abertoAgora ? " aberto" : "") }, cab, sub));
